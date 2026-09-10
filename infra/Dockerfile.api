@@ -1,0 +1,19 @@
+# Velmart API — multi-stage, non-root (plan section 23.4).
+# Built from the repository root:  docker build -f infra/Dockerfile.api .
+FROM python:3.13-slim AS builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+WORKDIR /app
+COPY apps/api/pyproject.toml apps/api/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+FROM python:3.13-slim AS runtime
+RUN adduser --system --group --no-create-home appuser
+WORKDIR /app
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+COPY --from=builder /app/.venv /app/.venv
+COPY apps/api/ .
+USER appuser
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,51 @@
+# Local development stack (plan section 23.2).
+# Production is Railway; this exists so the same Postgres major version can be
+# run locally. From the repository root:
+#
+#   docker compose -f infra/docker-compose.yml up -d postgres
+#   docker compose -f infra/docker-compose.yml up api
+
+name: velmart
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: velmart
+      POSTGRES_PASSWORD: velmart
+      POSTGRES_DB: velmart
+    ports:
+      - "5432:5432"
+    volumes:
+      # Postgres 18+ images expect a single mount at /var/lib/postgresql (not
+      # .../data) so PGDATA can live in a version-specific subdirectory,
+      # matching how pg_ctlcluster / pg_upgrade expect the layout to work.
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U velmart -d velmart"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: DEBUG
+      # Compose networking: the host is the service name, not localhost.
+      DATABASE_URL: postgresql://velmart:velmart@postgres:5432/velmart
+      JWT_SECRET_KEY: local-development-only-not-a-real-secret-change-me-please
+    ports:
+      - "8000:8000"
+    # Migrations are a deliberate pre-deploy step, never the start command
+    # (plan section 23.6). Run them explicitly:
+    #   docker compose -f infra/docker-compose.yml run --rm api alembic upgrade head
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+volumes:
+  postgres_data:
