@@ -1,12 +1,12 @@
-"""Password hashing and JWT handling (plan sections 20.2, 20.3).
+"""Password hashing and JWTs (plan sections 20.2, 20.3).
 
-Argon2id at m=64MB, t=3, p=4. Access tokens are short-lived (15 min) and carry
+Argon2id at m=64MB, t=3, p=4. Access tokens are short (15 min) and carry
 `token_version`, so bumping `users.token_version` invalidates every session for
 that user instantly — which is what happens when a role changes or an account is
 deactivated.
 
-Refresh tokens are never stored in the clear: only their SHA-256 digest is kept,
-so a database leak does not hand over live sessions.
+Page grants are deliberately **not** in the token: they are read per request, so
+revoking a grant takes effect immediately rather than at the next refresh.
 """
 
 from __future__ import annotations
@@ -14,50 +14,56 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import jwt
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from argon2.low_level import Type
+from argon2 import PasswordHasher, Type
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 from app.config import get_settings
 
 #: Plan section 20.3: Argon2id, m=64MB, t=3, p=4.
 _hasher = PasswordHasher(
+    memory_cost=65536,  # 64 MiB
     time_cost=3,
-    memory_cost=64 * 1024,  # KiB
     parallelism=4,
-    hash_len=32,
-    salt_len=16,
     type=Type.ID,
 )
 
 #: Plan section 20.3: minimum 10-character passwords.
 MIN_PASSWORD_LENGTH = 10
 
-TokenType = Literal["access"]
-
 
 class TokenError(Exception):
-    """A token was missing, malformed, expired, or otherwise unusable."""
+    """Raised when an access token is missing, malformed, or expired."""
 
 
-# --- passwords --------------------------------------------------------------
+class WeakPasswordError(ValueError):
+    """Raised when a password does not meet the minimum policy."""
+
+
+# --------------------------------------------------------------------------
+# Passwords
+# --------------------------------------------------------------------------
+
+
+def validate_password_strength(password: str) -> None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise WeakPasswordError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
 
 
 def hash_password(password: str) -> str:
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+    validate_password_strength(password)
     return _hasher.hash(password)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Constant-time verification. Never raises on a wrong password."""
+    """Constant-time verify. Returns False rather than raising on mismatch."""
     try:
         return _hasher.verify(password_hash, password)
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
+    except (VerifyMismatchError, InvalidHashError, ValueError):
         return False
 
 
@@ -65,11 +71,25 @@ def needs_rehash(password_hash: str) -> bool:
     """True when a stored hash predates the current Argon2 parameters."""
     try:
         return _hasher.check_needs_rehash(password_hash)
-    except InvalidHashError:
-        return True
+    except (InvalidHashError, ValueError):
+        return False
 
 
-# --- access tokens ----------------------------------------------------------
+# --------------------------------------------------------------------------
+# Access tokens
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AccessTokenClaims:
+    """The verified contents of an access token (plan section 20.2)."""
+
+    user_id: uuid.UUID
+    company_id: uuid.UUID
+    role: str
+    store_ids: tuple[uuid.UUID, ...]
+    token_version: int
+    jti: str
 
 
 def create_access_token(
@@ -77,75 +97,72 @@ def create_access_token(
     user_id: uuid.UUID,
     company_id: uuid.UUID,
     role: str,
-    store_ids: list[uuid.UUID] | None = None,
+    store_ids: list[uuid.UUID] | tuple[uuid.UUID, ...] = (),
     token_version: int,
-) -> tuple[str, datetime]:
-    """Mint an access JWT. Returns the token and its expiry.
-
-    Claims are exactly those in plan section 20.2. Page grants are deliberately
-    **not** in the token — they are read per request, so revoking a grant takes
-    effect immediately rather than at the next token refresh.
-    """
+) -> str:
     settings = get_settings()
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=settings.ACCESS_TOKEN_MINUTES)
-
+    now = datetime.now(tz=UTC)
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "company_id": str(company_id),
         "role": role,
-        "store_ids": [str(s) for s in (store_ids or [])],
-        "jti": uuid.uuid4().hex,
-        "iat": int(now.timestamp()),
-        "exp": int(expires_at.timestamp()),
+        "store_ids": [str(s) for s in store_ids],
         "token_version": token_version,
-        "typ": "access",
+        "jti": uuid.uuid4().hex,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_MINUTES),
     }
-    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
-    return token, expires_at
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def decode_access_token(token: str) -> dict[str, Any]:
+def decode_access_token(token: str) -> AccessTokenClaims:
     """Verify signature and expiry, and return the claims.
 
-    The algorithm is pinned to the configured one: accepting whatever the token
-    header asks for is how `alg: none` and HS/RS confusion attacks work.
+    Does **not** check `token_version` against the database — that is a
+    per-request read (app/dependencies/auth.py), because the whole point is
+    that it can change between token issue and token use.
     """
     settings = get_settings()
     try:
-        claims: dict[str, Any] = jwt.decode(
+        payload = jwt.decode(
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
             options={"require": ["exp", "iat", "sub"]},
         )
     except jwt.ExpiredSignatureError as exc:
-        raise TokenError("token has expired") from exc
+        raise TokenError("Access token has expired.") from exc
     except jwt.InvalidTokenError as exc:
-        raise TokenError("token is invalid") from exc
+        raise TokenError("Access token is invalid.") from exc
 
-    if claims.get("typ") != "access":
-        raise TokenError("not an access token")
-    return claims
+    try:
+        return AccessTokenClaims(
+            user_id=uuid.UUID(payload["sub"]),
+            company_id=uuid.UUID(payload["company_id"]),
+            role=payload["role"],
+            store_ids=tuple(uuid.UUID(s) for s in payload.get("store_ids", [])),
+            token_version=int(payload["token_version"]),
+            jti=payload["jti"],
+        )
+    except (KeyError, ValueError, TypeError) as exc:
+        raise TokenError("Access token is missing required claims.") from exc
 
 
-# --- refresh tokens ---------------------------------------------------------
+# --------------------------------------------------------------------------
+# Refresh tokens
+# --------------------------------------------------------------------------
 
 
 def generate_refresh_token() -> str:
-    """A high-entropy opaque token. Only its digest is ever persisted."""
+    """The raw value handed to the client. Never stored."""
     return secrets.token_urlsafe(48)
 
 
 def hash_refresh_token(token: str) -> str:
-    """SHA-256 of the raw token — what goes in `refresh_tokens.token_hash`.
+    """What goes in `refresh_tokens.token_hash` (plan section 8.2).
 
-    Fast digest rather than Argon2 deliberately: the token is already 48 bytes
-    of CSPRNG output, so it needs no stretching, and lookup happens on every
-    refresh.
+    sha256 rather than Argon2: this is a 48-byte random value, not a
+    human-chosen password, so there is nothing to brute-force and the lookup
+    happens on every refresh.
     """
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def refresh_token_expiry() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(days=get_settings().REFRESH_TOKEN_DAYS)

@@ -19,7 +19,7 @@ from app.core.logging import (
 )
 from app.db.readonly import dispose_readonly_engine
 from app.db.session import dispose_engine
-from app.routers import health
+from app.routers import auth, health
 
 log = get_logger(__name__)
 
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
     # time, before the container is ever marked healthy.
     settings = get_settings()
     configure_logging(settings.LOG_LEVEL)
+    app_version = "0.1.0"
 
     if settings.SENTRY_DSN:
         import sentry_sdk
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
             environment=settings.ENVIRONMENT.value,
+            release=f"velmart-api@{app_version}",  # release-tagged (plan 25.1)
             send_default_pii=False,  # never ship tokens or record payloads
         )
 
@@ -91,6 +93,7 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(auth.router)
     return app
 
 

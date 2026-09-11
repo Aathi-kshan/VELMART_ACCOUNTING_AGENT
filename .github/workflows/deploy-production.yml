@@ -1,0 +1,62 @@
+name: deploy-production
+
+# Runs after api-ci succeeds on main (plan section 24.1: main -> Railway ->
+# healthcheck -> smoke test). Gated on a RAILWAY_TOKEN repo secret so this
+# no-ops cleanly before the Railway project exists, rather than failing every
+# push to main.
+
+on:
+  workflow_run:
+    workflows: ["api-ci"]
+    branches: [main]
+    types: [completed]
+
+jobs:
+  deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Railway is configured
+        id: railway
+        env:
+          HAS_TOKEN: ${{ secrets.RAILWAY_TOKEN != '' }}
+        run: echo "configured=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Skip — Railway project not yet configured
+        if: steps.railway.outputs.configured != 'true'
+        run: |
+          echo "RAILWAY_TOKEN is not set. Skipping deploy until the Railway"
+          echo "project exists (plan section 23.2) and the secret is added."
+
+      - uses: actions/checkout@v4
+        if: steps.railway.outputs.configured == 'true'
+
+      - name: Install Railway CLI
+        if: steps.railway.outputs.configured == 'true'
+        run: npm install -g @railway/cli
+
+      - name: Deploy
+        if: steps.railway.outputs.configured == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service api --detach
+
+      - name: Wait for healthcheck
+        if: steps.railway.outputs.configured == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          # infra/railway.json's healthcheckPath (/health/ready) gates traffic
+          # on Railway's side; this just confirms it from the outside too.
+          URL=$(railway status --json | jq -r '.deployments[0].url')
+          for i in $(seq 1 20); do
+            if curl -fsS "https://$URL/health/ready"; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Deployment did not become healthy in time" >&2
+          exit 1

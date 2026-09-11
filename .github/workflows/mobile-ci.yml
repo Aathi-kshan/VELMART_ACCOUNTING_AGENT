@@ -1,0 +1,49 @@
+name: mobile-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+
+defaults:
+  run:
+    working-directory: apps/mobile
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.x"
+          channel: stable
+
+      - name: Skip if the client has no pubspec yet
+        id: check
+        run: |
+          if [ -f pubspec.yaml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No pubspec.yaml yet — apps/mobile is still a scaffold (plan section 22). Nothing to check."
+          fi
+
+      - name: flutter pub get
+        if: steps.check.outputs.exists == 'true'
+        run: flutter pub get
+
+      - name: dart analyze
+        if: steps.check.outputs.exists == 'true'
+        run: dart analyze --fatal-infos
+
+      - name: flutter test
+        if: steps.check.outputs.exists == 'true'
+        run: flutter test

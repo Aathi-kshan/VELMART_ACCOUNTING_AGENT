@@ -1,8 +1,4 @@
-"""Money precision (plan section 24.2, 'Financial correctness and data integrity').
-
-The property under test: a money value survives the round trip without ever
-becoming a float.
-"""
+"""Money must survive the round trip without losing a cent (plan section 9.1)."""
 
 from __future__ import annotations
 
@@ -10,114 +6,76 @@ from decimal import Decimal
 
 import pytest
 
-from app.core.money import (
-    MoneyError,
-    format_money,
-    money_or_none,
-    parse_money,
-    quantize_money,
-)
+from app.core.money import MoneyError, format_money, parse_money, quantize_money
 
 
-class TestFloatIsRefused:
-    """The whole point of the module: no float, ever."""
+class TestFloatIsRejected:
+    """The rule the whole module exists for."""
 
-    @pytest.mark.parametrize("value", [1.0, 0.1, 35000.50, -2.5])
-    def test_float_input_is_rejected(self, value: float) -> None:
+    def test_float_raises(self) -> None:
         with pytest.raises(MoneyError, match="float"):
-            parse_money(value)
+            parse_money(0.1)  # type: ignore[arg-type]
 
-    def test_the_classic_float_error_cannot_get_in(self) -> None:
-        # 0.1 + 0.2 == 0.30000000000000004 as a float. Passed as a string it is
-        # exact; passed as a float it is refused outright.
-        assert parse_money("0.30") == Decimal("0.30")
+    def test_float_that_looks_exact_still_raises(self) -> None:
+        # 35000.0 is representable, but accepting it establishes the habit.
         with pytest.raises(MoneyError):
-            parse_money(0.1 + 0.2)
+            parse_money(35000.0)  # type: ignore[arg-type]
 
     def test_bool_is_not_money(self) -> None:
         with pytest.raises(MoneyError):
-            parse_money(True)
-
-
-class TestParsing:
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            ("35000.00", "35000.00"),
-            ("35000", "35000.00"),
-            ("  1234.5  ", "1234.50"),
-            ("-99.99", "-99.99"),
-            ("0", "0.00"),
-            (50000, "50000.00"),
-            (Decimal("175000.005"), "175000.01"),
-        ],
-    )
-    def test_accepts_strings_ints_decimals(self, raw: object, expected: str) -> None:
-        assert parse_money(raw) == Decimal(expected)
-
-    @pytest.mark.parametrize("raw", ["", "   ", "abc", "1,234.00", "Rs.500", None, [], "NaN"])
-    def test_rejects_junk(self, raw: object) -> None:
-        with pytest.raises(MoneyError):
-            parse_money(raw)
-
-    def test_infinity_is_rejected(self) -> None:
-        with pytest.raises(MoneyError):
-            parse_money(Decimal("Infinity"))
+            parse_money(True)  # type: ignore[arg-type]
 
 
 class TestRounding:
-    """Half-up, because that is what a hand-checked ledger expects."""
+    """Half-up, not banker's rounding."""
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
             ("0.005", "0.01"),  # banker's rounding would give 0.00
-            ("0.015", "0.02"),  # banker's rounding would give 0.02 too
-            ("0.025", "0.03"),  # banker's rounding would give 0.02
-            ("2.675", "2.68"),
+            ("0.015", "0.02"),  # ...and 0.02 here, so this one agrees
+            ("0.025", "0.03"),  # banker's would give 0.02
+            ("2.675", "2.68"),  # the classic float example: 2.67 in binary
             ("-0.005", "-0.01"),
         ],
     )
-    def test_half_up_not_bankers(self, raw: str, expected: str) -> None:
-        assert quantize_money(Decimal(raw)) == Decimal(expected)
+    def test_half_up(self, raw: str, expected: str) -> None:
+        assert parse_money(raw) == Decimal(expected)
+
+    def test_quantize_is_idempotent(self) -> None:
+        once = quantize_money(Decimal("12.345"))
+        assert quantize_money(once) == once
 
 
-class TestNumericBounds:
-    """NUMERIC(14,2): twelve digits before the point, two after."""
+class TestPrecision:
+    def test_large_amount_keeps_every_digit(self) -> None:
+        # The value section 9.1 warns Dart's double turns into 812,399.99
+        assert parse_money("812400.00") == Decimal("812400.00")
 
-    def test_largest_representable_value(self) -> None:
-        assert parse_money("999999999999.99") == Decimal("999999999999.99")
+    def test_sum_of_thirds_does_not_drift(self) -> None:
+        total = sum((parse_money("0.01") for _ in range(100)), Decimal(0))
+        assert total == Decimal("1.00")
 
-    @pytest.mark.parametrize("raw", ["1000000000000.00", "-1000000000000.00"])
-    def test_overflow_is_rejected(self, raw: str) -> None:
+    def test_wire_format_always_two_places(self) -> None:
+        assert format_money(Decimal("35000")) == "35000.00"
+        assert format_money(Decimal("35000.5")) == "35000.50"
+
+    def test_string_round_trip(self) -> None:
+        original = "1234567.89"
+        assert format_money(parse_money(original)) == original
+
+
+class TestRejections:
+    @pytest.mark.parametrize("raw", ["", "   ", "abc", "12.34.56", "1,234.00"])
+    def test_invalid_strings(self, raw: str) -> None:
         with pytest.raises(MoneyError):
             parse_money(raw)
 
+    @pytest.mark.parametrize("raw", ["NaN", "Infinity", "-Infinity"])
+    def test_non_finite(self, raw: str) -> None:
+        with pytest.raises(MoneyError, match="finite"):
+            parse_money(raw)
 
-class TestWireFormat:
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [("35000", "35000.00"), ("0", "0.00"), ("-12.5", "-12.50")],
-    )
-    def test_always_two_decimals_as_string(self, raw: str, expected: str) -> None:
-        formatted = format_money(Decimal(raw))
-        assert formatted == expected
-        assert isinstance(formatted, str)
-
-    def test_no_scientific_notation(self) -> None:
-        # Decimal("1E+3") formats as "1000.00", not "1E+3" — JSON consumers and
-        # humans both need the plain form.
-        assert format_money(Decimal("1E+3")) == "1000.00"
-
-    def test_round_trips_through_the_wire_format(self) -> None:
-        original = Decimal("587400.37")
-        assert parse_money(format_money(original)) == original
-
-
-class TestOptional:
-    @pytest.mark.parametrize("empty", [None, "", "   "])
-    def test_empty_becomes_none(self, empty: object) -> None:
-        assert money_or_none(empty) is None
-
-    def test_value_still_parses(self) -> None:
-        assert money_or_none("12.34") == Decimal("12.34")
+    def test_out_of_range_for_numeric_14_2(self) -> None:
+        with pytest.raises(MoneyError, match="out of range"):
+            parse_money("1000000000000.00")

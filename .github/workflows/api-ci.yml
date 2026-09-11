@@ -1,0 +1,44 @@
+name: api-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/api-ci.yml"
+  pull_request:
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/api-ci.yml"
+
+defaults:
+  run:
+    working-directory: apps/api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Lint (ruff)
+        run: uv run ruff check app/ alembic/ tests/
+
+      - name: Type check (mypy)
+        run: uv run mypy app/
+
+      - name: Test (real Postgres via testcontainers)
+        run: uv run pytest -q
+        env:
+          # tests/conftest.py starts its own PostgreSQL 18 container and
+          # points DATABASE_URL at it; JWT_SECRET_KEY only needs to satisfy
+          # the length check, never a real secret in CI.
+          JWT_SECRET_KEY: ci-test-secret-key-at-least-sixty-four-bytes-long-000000

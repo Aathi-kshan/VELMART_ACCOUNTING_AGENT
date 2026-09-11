@@ -1,4 +1,4 @@
-"""Business dates and time handling (plan section 9.2).
+"""Business dates and time (plan section 9.2).
 
 Four timestamps, each with a job:
 
@@ -9,90 +9,62 @@ Four timestamps, each with a job:
 
 Everything is stored in UTC and rendered in Asia/Colombo.
 
-`business_date` is derived **server-side**, never taken from the client. A shop
-that closes at 11pm and cashes up at 00:30 posts that cash to the *previous*
-business date — getting this wrong is the most common source of "the numbers
-don't match" in retail software, which is why the cutoff lives here rather than
-being reimplemented per caller.
+The rule that matters: a shop closing at 11pm and cashing up at 12:30am must
+post that cash to the **previous** business date. Section 9.2 calls getting this
+wrong "the most common source of 'the numbers don't match' in retail software".
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-#: The shop's wall clock. Storage is UTC; this is only for interpretation.
-COMPANY_TZ = ZoneInfo("Asia/Colombo")
+#: The shop's wall clock. Sri Lanka is UTC+5:30 year round — no DST.
+COMPANY_TIMEZONE = "Asia/Colombo"
 
-#: Entries before this local hour belong to the previous business date.
+#: Entries before this local hour count as the previous business day
+#: (company_settings.day_cutoff_hour; 02:00 default per plan section 8.2).
 DEFAULT_DAY_CUTOFF_HOUR = 2
 
 
-def utc_now() -> datetime:
-    """Timezone-aware current time in UTC."""
-    return datetime.now(timezone.utc)
+def now_utc() -> datetime:
+    """The current instant, timezone-aware, in UTC."""
+    return datetime.now(tz=UTC)
 
 
-def to_company_time(moment: datetime, tz: ZoneInfo = COMPANY_TZ) -> datetime:
-    """Convert an instant to the shop's local wall clock.
+def to_company_time(moment: datetime, tz: str = COMPANY_TIMEZONE) -> datetime:
+    """Render a UTC instant in the company's local timezone.
 
-    A naive datetime is assumed to be UTC: everything crossing our boundaries is
-    UTC, and guessing 'local' for a naive value is how off-by-one-day bugs start.
+    A naive datetime is assumed to be UTC: everything this system stores is
+    UTC, so a missing tzinfo means "not yet localised", never "local time".
     """
     if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(tz)
-
-
-def derive_business_date(
-    occurred_at: datetime,
-    *,
-    day_cutoff_hour: int = DEFAULT_DAY_CUTOFF_HOUR,
-    tz: ZoneInfo = COMPANY_TZ,
-) -> date:
-    """The accounting day an event belongs to.
-
-    Local time before `day_cutoff_hour` counts as the previous business date, so
-    the 00:30 cash-up after an 11pm close lands on the day that earned it.
-    """
-    if not 0 <= day_cutoff_hour <= 23:
-        raise ValueError(f"day_cutoff_hour must be 0-23, got {day_cutoff_hour}")
-
-    local = to_company_time(occurred_at, tz)
-    if local.hour < day_cutoff_hour:
-        return (local - timedelta(days=1)).date()
-    return local.date()
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(ZoneInfo(tz))
 
 
 def business_date_for(
     occurred_at: datetime,
     *,
-    date_column_value: date | None = None,
-    day_cutoff_hour: int = DEFAULT_DAY_CUTOFF_HOUR,
-    tz: ZoneInfo = COMPANY_TZ,
+    cutoff_hour: int = DEFAULT_DAY_CUTOFF_HOUR,
+    tz: str = COMPANY_TIMEZONE,
 ) -> date:
-    """Resolve `business_date` the way the record write path must.
+    """The accounting day an event belongs to.
 
-    The page's designated date column wins when the Owner set one
-    (`pages.date_column_key`); otherwise fall back to `occurred_at` and the
-    company's cutoff hour.
+    Local time is what the shopkeeper means by "today", so the instant is first
+    converted to the company timezone. Anything before `cutoff_hour` belongs to
+    the previous day — the 12:30am cash-up after an 11pm close.
+
+    >>> business_date_for(datetime(2026, 9, 8, 17, 30, tzinfo=timezone.utc))
+    datetime.date(2026, 9, 8)
+    >>> # 00:30 Colombo on the 9th == 19:00 UTC on the 8th -> previous day
+    >>> business_date_for(datetime(2026, 9, 8, 19, 0, tzinfo=timezone.utc))
+    datetime.date(2026, 9, 8)
     """
-    if date_column_value is not None:
-        return date_column_value
-    return derive_business_date(occurred_at, day_cutoff_hour=day_cutoff_hour, tz=tz)
+    if not 0 <= cutoff_hour <= 23:
+        raise ValueError(f"cutoff_hour must be 0-23, got {cutoff_hour}")
 
-
-def business_day_bounds(
-    business_date: date,
-    *,
-    day_cutoff_hour: int = DEFAULT_DAY_CUTOFF_HOUR,
-    tz: ZoneInfo = COMPANY_TZ,
-) -> tuple[datetime, datetime]:
-    """The UTC half-open interval `[start, end)` covered by a business date.
-
-    The inverse of `derive_business_date`, for querying by instant rather than
-    by the stored `business_date` column.
-    """
-    start_local = datetime.combine(business_date, time(day_cutoff_hour), tzinfo=tz)
-    end_local = datetime.combine(business_date + timedelta(days=1), time(day_cutoff_hour), tzinfo=tz)
-    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+    local = to_company_time(occurred_at, tz)
+    if local.hour < cutoff_hour:
+        return (local - timedelta(days=1)).date()
+    return local.date()

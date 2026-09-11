@@ -36,10 +36,22 @@ class AppError(Exception):
     code: str = "BAD_REQUEST"
     title: str = "Bad request"
 
-    def __init__(self, detail: str, *, extra: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        extra: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
         self.extra = extra or {}
+        # Response headers (e.g. Retry-After on 429) carried on the exception
+        # itself. Setting them on a route's injected `Response` parameter has
+        # no effect once an exception propagates: the exception handler below
+        # builds a brand-new JSONResponse, discarding it. This is the only
+        # path that actually reaches the client.
+        self.headers = headers or {}
 
 
 class PermissionDeniedError(AppError):
@@ -74,6 +86,7 @@ def problem_response(
     code: str,
     request: Request,
     extra: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     body: dict[str, Any] = {
         "type": f"{PROBLEM_BASE_URL}/{_slug(code)}",
@@ -85,7 +98,12 @@ def problem_response(
     }
     if extra:
         body.update(extra)
-    return JSONResponse(status_code=status_code, content=body, media_type=PROBLEM_CONTENT_TYPE)
+    return JSONResponse(
+        status_code=status_code,
+        content=body,
+        media_type=PROBLEM_CONTENT_TYPE,
+        headers=headers or None,
+    )
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -98,6 +116,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             code=exc.code,
             request=request,
             extra=exc.extra,
+            headers=exc.headers,
         )
 
     @app.exception_handler(StarletteHTTPException)

@@ -21,6 +21,7 @@ from app.models.page import Page, PageKind
 from app.models.page_access import PageAccess
 from app.models.page_column import ColumnType, PageColumn
 from app.models.page_validation import PageValidation
+from app.models.rate_limit import RateLimit
 from app.models.record import Record, RecordStatus
 from app.models.store import Store
 from app.models.user import IdempotencyKey, RefreshToken, User, UserRole, UserStore
@@ -53,6 +54,7 @@ __all__ = [
     "ColumnType",
     "PageColumn",
     "PageValidation",
+    "RateLimit",
     "Record",
     "RecordStatus",
     "Store",

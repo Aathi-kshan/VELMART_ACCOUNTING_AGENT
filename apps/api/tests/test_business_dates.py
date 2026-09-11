@@ -1,129 +1,81 @@
-"""business_date derivation, including the midnight/cutoff boundary
-(plan sections 9.2 and 24.2).
+"""The midnight cash-up must land on the right accounting day (plan section 9.2).
 
-The scenario that motivates the whole module: the shop closes at 11pm and cashes
-up at 00:30. That cash belongs to the day that earned it, not to the calendar
-day the clock happens to show.
+Colombo is UTC+5:30 with no daylight saving, so every expected value below is
+the UTC instant plus 5h30m.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 
-from app.core.dates import (
-    COMPANY_TZ,
-    DEFAULT_DAY_CUTOFF_HOUR,
-    business_date_for,
-    business_day_bounds,
-    derive_business_date,
-    to_company_time,
-)
+from app.core.dates import business_date_for, to_company_time
 
 
-def colombo(y: int, m: int, d: int, hh: int = 0, mm: int = 0) -> datetime:
-    """A wall-clock moment in the shop's timezone."""
-    return datetime(y, m, d, hh, mm, tzinfo=COMPANY_TZ)
+def utc(y: int, m: int, d: int, hour: int, minute: int = 0) -> datetime:
+    return datetime(y, m, d, hour, minute, tzinfo=UTC)
 
 
 class TestCutoffBoundary:
-    """Default cutoff is 02:00 local."""
+    """The 02:00 default cutoff, exercised either side of the line."""
 
-    def test_the_cash_up_after_an_11pm_close(self) -> None:
-        # 00:30 on the 8th is still the 7th's trading day.
-        assert derive_business_date(colombo(2026, 9, 8, 0, 30)) == date(2026, 9, 7)
+    def test_evening_trading_is_same_day(self) -> None:
+        # 17:30 UTC == 23:00 Colombo, the shop closing
+        assert business_date_for(utc(2026, 9, 8, 17, 30)) == date(2026, 9, 8)
 
-    @pytest.mark.parametrize(
-        ("hour", "minute", "expected_day"),
-        [
-            (0, 0, 7),  # midnight exactly -> previous day
-            (1, 59, 7),  # one minute before cutoff -> previous day
-            (2, 0, 8),  # cutoff exactly -> current day
-            (2, 1, 8),  # just after cutoff -> current day
-            (23, 59, 8),  # late evening -> current day
-        ],
-    )
-    def test_boundary_is_inclusive_at_the_cutoff_hour(
-        self, hour: int, minute: int, expected_day: int
-    ) -> None:
-        moment = colombo(2026, 9, 8, hour, minute)
-        assert derive_business_date(moment) == date(2026, 9, expected_day)
+    def test_after_midnight_cash_up_is_previous_day(self) -> None:
+        # 19:00 UTC == 00:30 Colombo on the 9th — the cash-up after an 11pm
+        # close. It belongs to the 8th's takings.
+        assert business_date_for(utc(2026, 9, 8, 19, 0)) == date(2026, 9, 8)
 
-    def test_month_boundary(self) -> None:
-        assert derive_business_date(colombo(2026, 10, 1, 1, 0)) == date(2026, 9, 30)
+    def test_one_minute_before_cutoff_is_previous_day(self) -> None:
+        # 20:29 UTC == 01:59 Colombo
+        assert business_date_for(utc(2026, 9, 8, 20, 29)) == date(2026, 9, 8)
 
-    def test_year_boundary(self) -> None:
-        assert derive_business_date(colombo(2027, 1, 1, 0, 15)) == date(2026, 12, 31)
+    def test_exactly_at_cutoff_is_the_new_day(self) -> None:
+        # 20:30 UTC == 02:00 Colombo — the boundary is inclusive of the new day
+        assert business_date_for(utc(2026, 9, 8, 20, 30)) == date(2026, 9, 9)
+
+    def test_morning_is_the_new_day(self) -> None:
+        # 03:30 UTC == 09:00 Colombo
+        assert business_date_for(utc(2026, 9, 9, 3, 30)) == date(2026, 9, 9)
 
 
 class TestConfigurableCutoff:
-    def test_cutoff_zero_means_calendar_day(self) -> None:
-        assert derive_business_date(colombo(2026, 9, 8, 0, 30), day_cutoff_hour=0) == date(
-            2026, 9, 8
-        )
+    def test_zero_cutoff_means_calendar_day(self) -> None:
+        # With no cutoff, 00:30 Colombo is simply the 9th
+        assert business_date_for(utc(2026, 9, 8, 19, 0), cutoff_hour=0) == date(2026, 9, 9)
 
-    def test_later_cutoff_extends_the_trading_day(self) -> None:
-        assert derive_business_date(colombo(2026, 9, 8, 4, 0), day_cutoff_hour=6) == date(2026, 9, 7)
+    def test_late_cutoff_extends_the_business_day(self) -> None:
+        # A 6am cutoff: 05:00 Colombo still belongs to the previous day
+        assert business_date_for(utc(2026, 9, 8, 23, 30), cutoff_hour=6) == date(2026, 9, 8)
 
     @pytest.mark.parametrize("bad", [-1, 24, 99])
-    def test_invalid_cutoff_is_rejected(self, bad: int) -> None:
-        with pytest.raises(ValueError, match="day_cutoff_hour"):
-            derive_business_date(colombo(2026, 9, 8, 12), day_cutoff_hour=bad)
+    def test_invalid_cutoff_rejected(self, bad: int) -> None:
+        with pytest.raises(ValueError, match="cutoff_hour"):
+            business_date_for(utc(2026, 9, 8, 12), cutoff_hour=bad)
 
 
 class TestTimezoneHandling:
-    """Storage is UTC; interpretation is Asia/Colombo (UTC+5:30)."""
+    def test_colombo_offset_is_five_thirty(self) -> None:
+        local = to_company_time(utc(2026, 9, 8, 12, 0))
+        assert (local.hour, local.minute) == (17, 30)
 
-    def test_utc_input_is_converted_before_the_cutoff_is_applied(self) -> None:
-        # 19:30 UTC on the 7th == 01:00 Colombo on the 8th, which is before the
-        # 02:00 cutoff, so it belongs to the 7th.
-        utc_moment = datetime(2026, 9, 7, 19, 30, tzinfo=timezone.utc)
-        assert to_company_time(utc_moment).hour == 1
-        assert derive_business_date(utc_moment) == date(2026, 9, 7)
+    def test_offset_holds_in_january_too(self) -> None:
+        # Sri Lanka has no DST; the offset must not shift with the season.
+        local = to_company_time(utc(2026, 1, 8, 12, 0))
+        assert (local.hour, local.minute) == (17, 30)
 
     def test_naive_datetime_is_treated_as_utc(self) -> None:
-        naive = datetime(2026, 9, 7, 19, 30)
-        aware = datetime(2026, 9, 7, 19, 30, tzinfo=timezone.utc)
-        assert derive_business_date(naive) == derive_business_date(aware)
-
-    def test_utc_and_colombo_can_disagree_about_the_calendar_day(self) -> None:
-        # 21:00 UTC on the 7th is already 02:30 on the 8th in Colombo, past the
-        # cutoff — so the business date is the 8th even though it is still the
-        # 7th in UTC.
-        utc_moment = datetime(2026, 9, 7, 21, 0, tzinfo=timezone.utc)
-        assert utc_moment.date() == date(2026, 9, 7)
-        assert derive_business_date(utc_moment) == date(2026, 9, 8)
+        naive = datetime(2026, 9, 8, 19, 0)  # noqa: DTZ001 - deliberate
+        assert business_date_for(naive) == business_date_for(utc(2026, 9, 8, 19, 0))
 
 
-class TestBusinessDateFor:
-    """The page's designated date column wins over the derived value."""
+class TestMonthAndYearBoundaries:
+    def test_crosses_month_end(self) -> None:
+        # 19:00 UTC on 31 Aug == 00:30 Colombo on 1 Sep -> back to 31 Aug
+        assert business_date_for(utc(2026, 8, 31, 19, 0)) == date(2026, 8, 31)
 
-    def test_date_column_takes_precedence(self) -> None:
-        occurred = colombo(2026, 9, 8, 14, 0)
-        assert business_date_for(occurred, date_column_value=date(2026, 9, 1)) == date(2026, 9, 1)
-
-    def test_falls_back_to_derivation_when_no_date_column(self) -> None:
-        occurred = colombo(2026, 9, 8, 0, 30)
-        assert business_date_for(occurred, date_column_value=None) == date(2026, 9, 7)
-
-
-class TestBusinessDayBounds:
-    """The inverse of derive_business_date."""
-
-    def test_bounds_are_a_half_open_24_hour_window(self) -> None:
-        start, end = business_day_bounds(date(2026, 9, 7))
-        assert (end - start).total_seconds() == 24 * 3600
-        assert to_company_time(start).hour == DEFAULT_DAY_CUTOFF_HOUR
-
-    def test_every_instant_in_the_window_maps_back_to_the_same_date(self) -> None:
-        target = date(2026, 9, 7)
-        start, end = business_day_bounds(target)
-        assert derive_business_date(start) == target
-        # `end` is exclusive: it belongs to the next business date.
-        assert derive_business_date(end) == date(2026, 9, 8)
-
-    def test_windows_tile_without_gap_or_overlap(self) -> None:
-        _, first_end = business_day_bounds(date(2026, 9, 7))
-        second_start, _ = business_day_bounds(date(2026, 9, 8))
-        assert first_end == second_start
+    def test_crosses_year_end(self) -> None:
+        assert business_date_for(utc(2026, 12, 31, 19, 0)) == date(2026, 12, 31)

@@ -13,7 +13,7 @@ dependencies = [
     "asyncpg==0.31.0",
     "alembic==1.17.1",
     # validation
-    "pydantic>=2.9,<3",
+    "pydantic[email]>=2.9,<3",
     "pydantic-settings>=2.5",
     # auth
     "argon2-cffi>=23.1",
@@ -50,8 +50,21 @@ target-version = "py313"
 select = ["E", "F", "I", "UP", "B", "S", "ASYNC"]
 ignore = ["S101"]  # assert is fine in tests
 
+[tool.ruff.lint.flake8-bugbear]
+# Depends()/Query()/etc. in argument defaults is the FastAPI idiom, not a bug.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path",
+    "fastapi.Body", "fastapi.Header", "fastapi.Form", "fastapi.File",
+]
+
 [tool.ruff.lint.per-file-ignores]
 "alembic/versions/*" = ["E501"]  # DDL reads better unwrapped
+# "bearer" is the OAuth token_type label, not a credential.
+"app/schemas/auth.py" = ["S105"]
+# testcontainers credentials are throwaway, and "bearer" is the OAuth
+# token_type label — neither is a real password.
+"tests/conftest.py" = ["S106"]
+"tests/test_auth_login.py" = ["S105"]
 
 [tool.mypy]
 python_version = "3.13"
