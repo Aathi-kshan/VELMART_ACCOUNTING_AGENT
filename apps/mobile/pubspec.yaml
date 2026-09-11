@@ -1,0 +1,48 @@
+name: velmart
+description: Velmart — AI business data-management and accounting platform (client)
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.13.0 <4.0.0"
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management (plan section 6)
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # HTTP — interceptors for token refresh and retry
+  dio: ^5.7.0
+
+  # Routing — role-based guards
+  go_router: ^14.6.2
+
+  # Secure token storage (Keychain / Keystore)
+  flutter_secure_storage: ^9.2.2
+
+  # Device-id generation for refresh-token binding (plan section 20.2)
+  uuid: ^4.5.1
+
+  # Offline cache (P6) — declared now per the locked stack, unused until then
+  drift: ^2.22.1
+  sqlite3_flutter_libs: ^0.5.28
+
+  # Dashboard charts (P5)
+  fl_chart: ^0.69.2
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  riverpod_generator: ^2.6.3
+  build_runner: ^2.4.13
+  drift_dev: ^2.22.1
+
+flutter:
+  uses-material-design: true

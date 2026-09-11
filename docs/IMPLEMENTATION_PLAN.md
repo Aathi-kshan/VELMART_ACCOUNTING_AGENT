@@ -39,8 +39,9 @@ Two rules that override any schedule pressure:
 | Documentation (`docs/`) | ✅ Plan (v4.1), architecture, API, runbook, 6 ADRs |
 | **Phase 0 — complete (0.1–0.8)** | ✅ Done and **verified against real PostgreSQL 18.6**: full `0001`→`0008` chain applies, reverses to base, and re-applies; `/health/ready` returns 200 as `app_user` |
 | Verified live | Generated totals compute and follow updates · negative amounts and direct writes to generated columns rejected · `daily_reconciliation` correct (incl. missing-ledger dates) · audit hash chain links and is append-only for `app_user` · RLS tenant isolation holds |
-| `app/core/`, `services/`, `repositories/`, `routers/` (beyond health) | ⛔ Empty scaffolding — P1 onward |
-| `apps/mobile/` | ⛔ Empty scaffolding |
+| **P1 backend — auth (1.4–1.11)** | ✅ Done — money, business dates, Argon2id auth (login/refresh/logout/me), Postgres-backed rate limiting and idempotency, migration `0009`. **81 tests green against real PostgreSQL** |
+| `app/services/page_service.py` and onward (P2+) | ⛔ Empty scaffolding |
+| **P1 client (1.12–1.17)** | 🟡 All Dart source written — pubspec, Dio client + interceptors, secure storage, `Money` (int minor units), auth repository/controller, login + home screens, go_router guards. **Not yet verified**: no Flutter SDK on this machine, so `flutter pub get` / `dart analyze` / `flutter test` / `flutter create` (platform folders) have not run locally. Reviewed by hand instead — two real bugs found and fixed this way (an invalid `factory` constructor on an enum, and a wrongly-`const` `Uuid()`) — but a hand review is not a substitute for the compiler. `mobile-ci.yml` will run all of this for real (with a genuine Flutter install) on the next push |
 | Railway project, CI | ⛔ Not created — P1 |
 
 ---
@@ -110,14 +111,25 @@ migration chain applies and reverses cleanly against a real PostgreSQL 18.
 
 ### Client
 
-| # | Step | Files |
-|---|---|---|
-| 1.12 | Flutter shell building on **all four targets** | `apps/mobile/` |
-| 1.13 | Dio client + auth/retry interceptors | `lib/core/network/` |
-| 1.14 | Secure token storage (Keychain / Keystore) | `lib/core/storage/secure_store.dart` |
-| 1.15 | `Money` value object backed by `int` minor units — **never `double`** | `lib/core/money/money.dart` |
-| 1.16 | Login screen; display name + role | `lib/features/auth/` |
-| 1.17 | go_router with role-based guards | `lib/routing/` |
+| # | Step | Files | Status |
+|---|---|---|---|
+| 1.12 | Flutter shell building on **all four targets** | `apps/mobile/` | 🟡 `pubspec.yaml` written; **`flutter create` not yet run** — no platform folders (`ios/`, `android/`, `macos/`, `windows/`, `linux/`) exist yet, so nothing can build to a device or desktop target until that runs |
+| 1.13 | Dio client + auth/retry interceptors | `lib/core/network/` | ✅ Written — bearer token attach, single-flight refresh-on-401 with device-family-safe coalescing, exponential-backoff retry gated on `Idempotency-Key` for non-GET |
+| 1.14 | Secure token storage (Keychain / Keystore) | `lib/core/storage/secure_store.dart` | ✅ Written |
+| 1.15 | `Money` value object backed by `int` minor units — **never `double`** | `lib/core/money/money.dart` | ✅ Written, with a unit test at `test/core/money_test.dart` mirroring `test_money_precision.py` |
+| 1.16 | Login screen; display name + role | `lib/features/auth/` | ✅ Written — repository, `AuthState`/`AuthController`, login screen, home screen |
+| 1.17 | go_router with role-based guards | `lib/routing/` | ✅ Written — redirect-based guard; **UI convenience only**, mirrors but never replaces the server-side matrix |
+
+**Verification gap, stated plainly:** this machine has Xcode **Command Line Tools** only, not the
+full Xcode.app (which needs interactive App Store sign-in to install) — so `flutter run -d macos`
+or an iOS simulator cannot be exercised here regardless of platform choice, and there is no Android
+SDK either. Every file above was hand-reviewed for balance and against each package's real API
+instead of compiler-checked, and that process caught two genuine bugs (a `factory` constructor
+declared on an enum — Dart enums cannot have factory constructors — and a `const Uuid()` call, since
+`Uuid()` is not a const constructor). A hand review is evidence of care, not a substitute for
+`flutter analyze` and `flutter test` actually running. `mobile-ci.yml` installs a real Flutter SDK
+on the GitHub Actions runner and will run `pub get` / `analyze` / `test` for real on the next push —
+that is the first genuine compile-check this code gets.
 
 ### CI
 
