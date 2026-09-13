@@ -33,6 +33,10 @@ class Page(Base, UUIDPKMixin, TenantMixin, TimestampMixin):
     )
     date_column_key: Mapped[str | None] = mapped_column(Text)
     store_column_key: Mapped[str | None] = mapped_column(Text)
+    #: The NUMBER/CURRENCY column `GET /pages/{id}/running-balance` sums
+    #: cumulatively over this page's rows (P4 §8) — only meaningful on a
+    #: `kind = LEDGER` page.
+    balance_column_key: Mapped[str | None] = mapped_column(Text)
     projection_map: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_by: Mapped[uuid.UUID] = mapped_column(

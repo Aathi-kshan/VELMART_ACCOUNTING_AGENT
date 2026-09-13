@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.core.ratelimit import hit_login_ip
 from app.db.session import get_session
 from app.dependencies.auth import current_user
+from app.dependencies.db import get_rls_session
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
@@ -38,8 +39,12 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-async def _token_response(session: AsyncSession, pair: auth_service.TokenPair) -> TokenResponse:
-    store_ids = await auth_service.store_ids_for(session, pair.user)
+def _token_response(pair: auth_service.TokenPair) -> TokenResponse:
+    # pair.store_ids was computed by auth_service inside its own transaction,
+    # while RLS was still armed — not re-queried here. login()/refresh()
+    # already committed by the time this runs, and set_config(..., true) is
+    # transaction-scoped, so a fresh query on this session would run with no
+    # RLS context at all.
     return TokenResponse(
         access_token=pair.access_token,
         expires_in=pair.expires_in,
@@ -50,7 +55,8 @@ async def _token_response(session: AsyncSession, pair: auth_service.TokenPair) -
             full_name=pair.user.full_name,
             email=str(pair.user.email),
             role=str(pair.user.role),
-            store_ids=store_ids,
+            is_active=pair.user.is_active,
+            store_ids=pair.store_ids,
         ),
     )
 
@@ -91,7 +97,7 @@ async def login(
         # One message for every failure mode — wrong password, unknown email,
         # locked account — so the endpoint cannot enumerate users.
         raise InvalidCredentialsError(str(exc)) from exc
-    return await _token_response(session, pair)
+    return _token_response(pair)
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
@@ -112,7 +118,7 @@ async def refresh(
         )
     except auth_service.RefreshTokenError as exc:
         raise InvalidCredentialsError(str(exc)) from exc
-    return await _token_response(session, pair)
+    return _token_response(pair)
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -123,10 +129,19 @@ async def logout(payload: LogoutRequest, session: AsyncSession = Depends(get_ses
 
 @router.get("/me", response_model=UserOut)
 async def me(
-    user: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+    user: User = Depends(current_user), session: AsyncSession = Depends(get_rls_session)
 ) -> UserOut:
     # Store assignments (and, from P3, page grants) are read per request rather
     # than carried in the token, so a revocation takes effect immediately.
+    #
+    # This must be get_rls_session, not the plain get_session: current_user's
+    # own internal transaction (to decode the token and validate the user)
+    # already committed by the time this handler runs, and set_config(...,
+    # true) is transaction-scoped — a query against `stores` on a session
+    # with no open, RLS-armed transaction returns nothing under real
+    # enforcement (previously invisible under the superuser test connection).
+    # get_rls_session re-arms RLS from the token's own claims and keeps that
+    # transaction open for the rest of this request.
     store_ids = await auth_service.store_ids_for(session, user)
     return UserOut(
         id=user.id,
@@ -134,5 +149,6 @@ async def me(
         full_name=user.full_name,
         email=str(user.email),
         role=str(user.role),
+        is_active=user.is_active,
         store_ids=store_ids,
     )

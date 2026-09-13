@@ -15,7 +15,7 @@ class ApiClient {
     : secureStore = secureStore ?? SecureStore(),
       dio = Dio(
         BaseOptions(
-          baseUrl: '${Env.apiBaseUrl}/v1',
+          baseUrl: Env.apiBaseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 15),
           contentType: 'application/json',

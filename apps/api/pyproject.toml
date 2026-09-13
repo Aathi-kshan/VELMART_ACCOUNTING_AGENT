@@ -80,3 +80,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: volume/perf benchmarks (P4 §12) — seed ~100k rows and time real endpoints; excluded from the default run, invoke explicitly with `-m slow` on demand or in a nightly job.",
+]
+#: `not slow` by default so a plain `pytest`/CI run never pays for seeding
+#: ~100k rows; `pytest -m slow` (or `-m '' tests/perf/`) opts back in.
+addopts = "-m 'not slow'"

@@ -19,7 +19,22 @@ from app.core.logging import (
 )
 from app.db.readonly import dispose_readonly_engine
 from app.db.session import dispose_engine
-from app.routers import auth, health
+from app.routers import (
+    access,
+    audit,
+    auth,
+    columns,
+    dashboard,
+    exports,
+    health,
+    imports,
+    pages,
+    query,
+    records,
+    stores,
+    users,
+    validations,
+)
 
 log = get_logger(__name__)
 
@@ -58,7 +73,20 @@ def create_app() -> FastAPI:
         docs_url=None if settings.is_production else "/docs",
         redoc_url=None,
     )
-    # No CORS middleware: V1 has four native clients and no web app.
+    # No CORS middleware in production: V1 has four native clients and no web
+    # app, and native clients don't send CORS preflight requests at all. This
+    # is dev-only, to let a browser-hosted Flutter build (used for local
+    # verification when no Xcode/Android SDK is available) reach the API;
+    # `is_production` never allows it.
+    if not settings.is_production:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     @app.middleware("http")
     async def request_context(
@@ -94,6 +122,18 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(users.router)
+    app.include_router(stores.router)
+    app.include_router(pages.router)
+    app.include_router(columns.router)
+    app.include_router(access.router)
+    app.include_router(records.router)
+    app.include_router(query.router)
+    app.include_router(dashboard.router)
+    app.include_router(exports.router)
+    app.include_router(imports.router)
+    app.include_router(validations.router)
+    app.include_router(audit.router)
     return app
 
 

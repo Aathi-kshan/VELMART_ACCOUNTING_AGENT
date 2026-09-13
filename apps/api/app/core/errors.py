@@ -78,6 +78,102 @@ class ValidationFailedError(AppError):
     title = "Validation failed"
 
 
+class VersionConflictError(AppError):
+    """Optimistic-locking mismatch (docs/API.md §1.2) — `extra` should carry
+    `{"current_version": ...}` so the caller can refetch and retry."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "VERSION_CONFLICT"
+    title = "Version conflict"
+
+
+class ReservedPageKeyError(AppError):
+    """plan section 10.3 / docs/API.md §1.7 — a page name derives to a key
+    reserved for one of the six system pages, including singular/plural
+    variants."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "RESERVED_PAGE_KEY"
+    title = "Reserved page key"
+
+
+class SystemPageImmutableError(AppError):
+    """docs/API.md §1.7 — a system page's schema changes only by migration."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "SYSTEM_PAGE_IMMUTABLE"
+    title = "System page is immutable"
+
+
+class ColumnKeyImmutableError(AppError):
+    """plan section 10.3 — `key` never changes; only `name` does."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "COLUMN_KEY_IMMUTABLE"
+    title = "Column key is immutable"
+
+
+class ProtectedFieldForbiddenError(AppError):
+    """plan section 11.4 / docs/API.md §1.4 — a protected column (e.g.
+    `cheques.cheque_status`) is never set or changed through the generic
+    create/update path, only through its dedicated endpoint, and only by an
+    owner."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "PROTECTED_FIELD_FORBIDDEN"
+    title = "Insufficient permission"
+
+
+class ExpressionSecurityError(AppError):
+    """P4 §1 — a FORMULA/`page_validations` expression was rejected by the
+    whitelist parser: a disallowed node type, an unknown function, an
+    operand that isn't a real column on this page, or a length/depth cap.
+    Raised at save time, never at read time."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    code = "EXPRESSION_REJECTED"
+    title = "Expression rejected"
+
+
+class FormulaCycleError(AppError):
+    """P4 §4 / docs/API.md §1.4 — a FORMULA column's dependency graph has a
+    cycle (directly or transitively through other formula columns),
+    rejected at column save time, never reaching the database."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "FORMULA_CYCLE"
+    title = "Formula cycle"
+
+
+class ReferenceNotFoundError(AppError):
+    """P4 §5 / docs/API.md §1.4 — a `RECORD_REF` value doesn't match any
+    (non-deleted) record on its configured target page in this company.
+    Never creates a stub (plan section 11.2)."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    code = "REFERENCE_NOT_FOUND"
+    title = "Reference not found"
+
+
+class ReferencedRecordExistsError(AppError):
+    """P4 §5 / plan section 11.2 — deleting this record is blocked while
+    another page's `RECORD_REF` column still points at it."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "REFERENCED_RECORD_EXISTS"
+    title = "Record is still referenced"
+
+
+class LedgerRecordImmutableError(AppError):
+    """P4 §8 / docs/PROJECT_PLAN.md §4.4 — a `kind = LEDGER` page's records
+    are corrected by a linked reversal (`POST /records/{id}/reverse`), never
+    edited in place."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "LEDGER_RECORD_IMMUTABLE"
+    title = "Ledger record is immutable"
+
+
 def problem_response(
     *,
     status_code: int,

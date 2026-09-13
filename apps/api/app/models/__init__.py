@@ -15,6 +15,7 @@ from app.models.business import (
     Purchase,
 )
 from app.models.company import Company, CompanySettings
+from app.models.daily_digest import DailyDigest
 from app.models.dashboard_widget import DashboardWidget
 from app.models.import_batch import ImportBatch
 from app.models.page import Page, PageKind
@@ -46,6 +47,7 @@ __all__ = [
     "Purchase",
     "Company",
     "CompanySettings",
+    "DailyDigest",
     "DashboardWidget",
     "ImportBatch",
     "Page",

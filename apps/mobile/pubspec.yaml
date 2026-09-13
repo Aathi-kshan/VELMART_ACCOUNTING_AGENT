@@ -24,8 +24,14 @@ dependencies:
   # Secure token storage (Keychain / Keystore)
   flutter_secure_storage: ^9.2.2
 
-  # Device-id generation for refresh-token binding (plan section 20.2)
+  # Device-id generation for refresh-token binding (plan section 20.2) and
+  # client_uuid / Idempotency-Key on record creates (plan section 21.1)
   uuid: ^4.5.1
+
+  # Date formatting. Appendix A.1: "use intl from day one so Sinhala is a
+  # translation file later, not a rewrite". Money keeps its own formatter —
+  # int minor units must never round-trip through a locale parser.
+  intl: ^0.19.0
 
   # Offline cache (P6) — declared now per the locked stack, unused until then
   drift: ^2.22.1
@@ -33,6 +39,17 @@ dependencies:
 
   # Dashboard charts (P5)
   fl_chart: ^0.69.2
+
+  # CSV export (plan section 13.2, P3.5 Part 2) — hands the exported file to
+  # the OS share sheet (Save to Files, AirDrop, email, ...) rather than
+  # requesting storage permissions or picking a save location ourselves.
+  share_plus: ^10.1.4
+
+  # CSV import (plan section 13.1, P3.5 Part 3) — lets the Owner pick a CSV
+  # off the device to upload; `withData: true` reads it straight into memory
+  # rather than leaving only a platform-specific path (mobile sandboxing
+  # makes that path unusable for a multipart upload on some platforms).
+  file_picker: ^8.1.6
 
   cupertino_icons: ^1.0.8
 
@@ -43,6 +60,7 @@ dev_dependencies:
   riverpod_generator: ^2.6.3
   build_runner: ^2.4.13
   drift_dev: ^2.22.1
+  mocktail: ^1.0.4
 
 flutter:
   uses-material-design: true

@@ -2,7 +2,8 @@
 ///
 /// The API base URL, injected via `--dart-define=API_BASE_URL=...` at build
 /// time. Defaults to the local development API (`docs/API.md` base:
-/// `https://<railway-domain>/v1` in production).
+/// `https://<railway-domain>` in production — no version prefix; every
+/// backend route is registered unprefixed except `/health`/`/health/ready`).
 class Env {
   Env._();
 

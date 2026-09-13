@@ -37,7 +37,7 @@ class AuthRepository {
         '/auth/login',
         data: {'email': email, 'password': password, 'device_id': deviceId},
       );
-      return _saveAndParse(response.data!);
+      return await _saveAndParse(response.data!);
     } on DioException catch (e) {
       throw AuthException(_messageFor(e));
     }

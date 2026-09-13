@@ -7,6 +7,17 @@ that a mocked session would happily pretend to have.
 
 The container is built once per session, migrated to head, and each test runs
 against a schema truncated back to empty.
+
+P2 closes a gap found while planning that phase: PostgreSQL does not enforce
+Row-Level Security against a table's owner/superuser, so if the running app
+itself connected as the container's superuser (as it did through P1), every
+RLS policy would be silently bypassed in every test. `DATABASE_URL` — what
+`app.db.session.get_engine()` actually connects with — is therefore
+`app_user` (migration 0001's least-privilege role, matching production), not
+the superuser. Fixtures that set up data ahead of any tenant context
+(`company`, `owner`, `_clean_tables`) still use the superuser `engine`/
+`session` fixtures below, since bypassing RLS is exactly what test setup and
+teardown need.
 """
 
 from __future__ import annotations
@@ -16,6 +27,7 @@ import subprocess
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -48,10 +60,26 @@ def postgres_url() -> Iterator[str]:
         yield plain
 
 
+@pytest.fixture(scope="session")
+def app_user_url(postgres_url: str) -> str:
+    """The same container and database, but as `app_user` (migration 0001)
+    rather than the superuser — what the running app must connect as for RLS
+    to mean anything. See the module docstring."""
+    parts = urlsplit(postgres_url)
+    netloc = f"app_user:CHANGE_ME@{parts.hostname}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 @pytest.fixture(scope="session", autouse=True)
-def _settings(postgres_url: str) -> Iterator[None]:
-    """Point the app at the container before anything imports settings."""
-    os.environ["DATABASE_URL"] = postgres_url
+def _settings(app_user_url: str) -> Iterator[None]:
+    """Point the app at the container before anything imports settings.
+
+    `DATABASE_URL` is the `app_user` connection, not the superuser one — see
+    the module docstring for why. Migrations (in `postgres_url` above) and
+    test data setup (the `engine`/`session` fixtures below) go through the
+    superuser connection directly, unaffected by this.
+    """
+    os.environ["DATABASE_URL"] = app_user_url
     os.environ.setdefault("JWT_SECRET_KEY", "test-secret-" + "x" * 60)  # >= 64 bytes
     os.environ.setdefault("ENVIRONMENT", "development")
 
@@ -76,6 +104,21 @@ async def session(engine) -> AsyncIterator[AsyncSession]:  # noqa: ANN001
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
         yield s
+
+
+@pytest.fixture
+async def app_user_session(app_user_url: str) -> AsyncIterator[AsyncSession]:
+    """A session connected as `app_user` — the same role the running app
+    uses — for tests that must exercise real RLS enforcement directly rather
+    than through the superuser `session` fixture above, which RLS never
+    restricts regardless of context."""
+    from app.config import to_asyncpg_url
+
+    eng = create_async_engine(to_asyncpg_url(app_user_url), poolclass=None)
+    maker = async_sessionmaker(eng, expire_on_commit=False)
+    async with maker() as s:
+        yield s
+    await eng.dispose()
 
 
 @pytest.fixture(autouse=True)
@@ -161,3 +204,63 @@ async def owner(session: AsyncSession, company: uuid.UUID, owner_password: str) 
     )
     await session.commit()
     return user_id
+
+
+@pytest.fixture
+def manager_password() -> str:
+    return "correct-horse-battery"
+
+
+@pytest.fixture
+async def manager(session: AsyncSession, company: uuid.UUID, manager_password: str) -> uuid.UUID:
+    from sqlalchemy import text
+
+    from app.core.security import hash_password
+
+    user_id = uuid.uuid4()
+    await session.execute(
+        text(
+            """
+            INSERT INTO users (id, company_id, email, full_name, password_hash, role)
+            VALUES (:id, :company_id, :email, 'Test Manager', :pw, 'MANAGER')
+            """
+        ),
+        {
+            "id": str(user_id),
+            "company_id": str(company),
+            "email": "manager@test.lk",
+            "pw": hash_password(manager_password),
+        },
+    )
+    await session.commit()
+    return user_id
+
+
+@pytest.fixture
+async def system_pages(session: AsyncSession, company: uuid.UUID, owner: uuid.UUID) -> None:
+    """Seeds the six P3.5 system pages (Employee Salary, Purchases, Expenses,
+    Daily Revenue, Cash Ledger, Cheques) for `company` — the same
+    `register_system_pages` a real deployment's `seed_demo.py` calls. Uses
+    the superuser `session` fixture, so no RLS context needs setting."""
+    from app.core.context import SecurityContext
+    from app.models.user import UserRole
+    from app.services.page_service import register_system_pages
+
+    ctx = SecurityContext(user_id=owner, company_id=company, role=UserRole.OWNER, store_ids=())
+    await register_system_pages(session, ctx, company)
+    await session.commit()
+
+
+@pytest.fixture
+async def system_page_ids(
+    session: AsyncSession, company: uuid.UUID, system_pages: None
+) -> dict[str, str]:
+    """`page.key` -> `page.id` for the six seeded system pages, so tests
+    don't each need their own `GET /pages` round trip just to find one."""
+    from sqlalchemy import text
+
+    result = await session.execute(
+        text("SELECT key, id FROM pages WHERE company_id = :company_id AND is_system = true"),
+        {"company_id": str(company)},
+    )
+    return {key: str(page_id) for key, page_id in result.all()}

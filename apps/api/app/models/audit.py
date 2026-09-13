@@ -21,26 +21,43 @@ from app.models.user import UserRole
 
 
 class AuditAction(enum.StrEnum):
-    CREATE = "CREATE"
-    UPDATE = "UPDATE"
-    DELETE = "DELETE"
+    """Every `action` string actually passed to `write_audit_log` in this
+    codebase, kept in sync by hand (P5) — `action` itself is stored and typed
+    as plain `str` everywhere, never validated against this enum at write
+    time, so this is documentation and the read-side sentence formatter's
+    (`app/services/audit_read_service.py`) exhaustiveness reference, not an
+    enforced constraint. Re-grep `write_audit_log(` across `app/` before
+    trusting this list is still complete.
+    """
+
+    RECORD_CREATE = "RECORD_CREATE"
+    RECORD_UPDATE = "RECORD_UPDATE"
+    RECORD_DELETE = "RECORD_DELETE"
+    RECORD_REVERSE = "RECORD_REVERSE"
     PROTECTED_FIELD_CHANGE = "PROTECTED_FIELD_CHANGE"
     LOGIN = "LOGIN"
     LOGIN_FAILED = "LOGIN_FAILED"
     PERMISSION_DENIED = "PERMISSION_DENIED"
-    EXPORT = "EXPORT"
-    IMPORT = "IMPORT"
-    IMPORT_ROLLBACK = "IMPORT_ROLLBACK"
+    CSV_EXPORT = "CSV_EXPORT"
+    CSV_IMPORT = "CSV_IMPORT"
+    CSV_IMPORT_ROLLBACK = "CSV_IMPORT_ROLLBACK"
     PAGE_CREATE = "PAGE_CREATE"
     PAGE_UPDATE = "PAGE_UPDATE"
     PAGE_ARCHIVE = "PAGE_ARCHIVE"
+    PAGE_ACCESS_UPDATE = "PAGE_ACCESS_UPDATE"
     COLUMN_CREATE = "COLUMN_CREATE"
     COLUMN_UPDATE = "COLUMN_UPDATE"
-    COLUMN_ARCHIVE = "COLUMN_ARCHIVE"
+    VALIDATION_CREATE = "VALIDATION_CREATE"
+    VALIDATION_UPDATE = "VALIDATION_UPDATE"
+    STORE_CREATE = "STORE_CREATE"
+    STORE_UPDATE = "STORE_UPDATE"
     USER_CREATE = "USER_CREATE"
     USER_UPDATE = "USER_UPDATE"
-    SETTINGS_UPDATE = "SETTINGS_UPDATE"
-    ACCESS_GRANT = "ACCESS_GRANT"
+    #: P5 — dashboard widgets (plan section 15, §18.2's "Dashboard widget
+    #: added / changed").
+    DASHBOARD_WIDGET_CREATE = "DASHBOARD_WIDGET_CREATE"
+    DASHBOARD_WIDGET_UPDATE = "DASHBOARD_WIDGET_UPDATE"
+    DASHBOARD_WIDGET_DELETE = "DASHBOARD_WIDGET_DELETE"
     AI_PROPOSAL_CREATED = "AI_PROPOSAL_CREATED"
     AI_PROPOSAL_APPLIED = "AI_PROPOSAL_APPLIED"
     AI_PROPOSAL_CANCELLED = "AI_PROPOSAL_CANCELLED"

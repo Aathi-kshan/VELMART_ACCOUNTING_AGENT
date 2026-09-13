@@ -30,6 +30,7 @@ class UserOut(BaseModel):
     full_name: str
     email: str
     role: str
+    is_active: bool
     store_ids: list[uuid.UUID] = Field(default_factory=list)
 
 

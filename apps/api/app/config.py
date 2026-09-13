@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # --- database ---------------------------------------------------------
     DATABASE_URL: str
     DATABASE_URL_READONLY: str | None = None  # ai_reader role; required in production
+    #: `migrator` role — schema owner, so RLS-exempt by default (P5 §12:
+    #: `ALTER ROLE migrator BYPASSRLS`, migration 0012). Used only by
+    #: `app/tasks/*.py` (the nightly cron), never a request path: the audit
+    #: chain is one global sequence across every tenant (no `WHERE
+    #: company_id` in the hash-chain trigger itself), so verifying it needs
+    #: a connection RLS doesn't scope to one company at a time.
+    DATABASE_URL_MIGRATOR: str | None = None
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 5
     DB_STATEMENT_TIMEOUT_MS: int = 15_000
@@ -95,6 +102,10 @@ class Settings(BaseSettings):
     def database_url_readonly(self) -> str | None:
         return to_asyncpg_url(self.DATABASE_URL_READONLY) if self.DATABASE_URL_READONLY else None
 
+    @property
+    def database_url_migrator(self) -> str | None:
+        return to_asyncpg_url(self.DATABASE_URL_MIGRATOR) if self.DATABASE_URL_MIGRATOR else None
+
     @model_validator(mode="after")
     def _require_production_secrets(self) -> Self:
         """In production every external credential must be present at boot."""
@@ -103,6 +114,7 @@ class Settings(BaseSettings):
 
         required = {
             "DATABASE_URL_READONLY": self.DATABASE_URL_READONLY,
+            "DATABASE_URL_MIGRATOR": self.DATABASE_URL_MIGRATOR,
             "AWS_ENDPOINT_URL": self.AWS_ENDPOINT_URL,
             "AWS_ACCESS_KEY_ID": self.AWS_ACCESS_KEY_ID,
             "AWS_SECRET_ACCESS_KEY": self.AWS_SECRET_ACCESS_KEY,

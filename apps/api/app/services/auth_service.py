@@ -42,6 +42,7 @@ from app.core.security import (
 )
 from app.db.rls import set_rls_context
 from app.models.user import RefreshToken, User
+from app.services.audit_service import write_audit_log
 
 log = get_logger(__name__)
 
@@ -72,6 +73,14 @@ class TokenPair:
     refresh_token: str
     expires_in: int
     user: User
+    #: Computed once, here, while RLS is still armed for this transaction.
+    #: The router must reuse this rather than calling store_ids_for again —
+    #: login()/refresh() commit before returning, and set_config(..., true)
+    #: is transaction-scoped, so a second query after that commit would run
+    #: with no RLS context at all (this was a real, RLS-invisible-until-now
+    #: bug: it silently returned zero rows under the superuser test
+    #: connection, and raises under app_user's real enforcement).
+    store_ids: list[uuid.UUID]
 
 
 async def store_ids_for(session: AsyncSession, user: User) -> list[uuid.UUID]:
@@ -118,46 +127,7 @@ async def _issue_tokens(
         refresh_token=raw_refresh,
         expires_in=settings.ACCESS_TOKEN_MINUTES * 60,
         user=user,
-    )
-
-
-async def _audit(
-    session: AsyncSession,
-    *,
-    company_id: uuid.UUID,
-    action: str,
-    actor_user_id: uuid.UUID | None,
-    actor_role: str | None,
-    ip_address: str | None,
-    user_agent: str | None,
-) -> None:
-    """Write an audit row.
-
-    RLS applies to app_user, so the tenant context must be set inside this
-    transaction first or the insert is refused by the tenant_isolation policy.
-    `row_hash` is computed by the database trigger, never here.
-    """
-    await set_rls_context(session, company_id=company_id, role=actor_role or "OWNER")
-    await session.execute(
-        text(
-            """
-            INSERT INTO audit_logs
-                (company_id, actor_user_id, actor_role, action, entity_type,
-                 entity_id, source, ip_address, user_agent, row_hash)
-            VALUES
-                (:company_id, :actor_user_id, CAST(:actor_role AS user_role), :action,
-                 'user', :entity_id, 'APP', CAST(:ip AS inet), :ua, '')
-            """
-        ),
-        {
-            "company_id": str(company_id),
-            "actor_user_id": str(actor_user_id) if actor_user_id else None,
-            "actor_role": actor_role,
-            "action": action,
-            "entity_id": str(actor_user_id) if actor_user_id else None,
-            "ip": ip_address,
-            "ua": user_agent,
-        },
+        store_ids=store_ids,
     )
 
 
@@ -179,7 +149,16 @@ async def login(
     # company, but section 20.2's login payload carries no company. V1 has one
     # company, so an exact single match is required; multi-company would need
     # globally unique emails or a company selector.
-    result = await session.execute(select(User).where(User.email == email))
+    #
+    # This can't be a plain SELECT: `users` carries RLS (migration 0006) and
+    # app_user has no context to scope it by yet — that's exactly what this
+    # query is trying to discover. auth_find_user_by_email (migration 0010)
+    # is a SECURITY DEFINER function, the one sanctioned bypass for this exact
+    # lookup.
+    result = await session.execute(
+        select(User).from_statement(text("SELECT * FROM auth_find_user_by_email(:email)")),
+        {"email": email},
+    )
     users = result.scalars().all()
     user = users[0] if len(users) == 1 else None
 
@@ -188,13 +167,21 @@ async def login(
         log.warning("auth.login_unknown_email", ip_address=ip_address)
         raise AuthenticationError("Invalid email or password.")
 
+    # The company is known now — arm RLS for the rest of this transaction so
+    # every query below (the lockout/failure update, the audit row, issuing
+    # tokens and reading store_ids_for) is a normal, RLS-scoped query rather
+    # than a further special case.
+    await set_rls_context(session, company_id=user.company_id, role=str(user.role))
+
     now = datetime.now(tz=UTC)
 
     if user.locked_until is not None and user.locked_until > now:
-        await _audit(
+        await write_audit_log(
             session,
             company_id=user.company_id,
             action="LOGIN_FAILED",
+            entity_type="user",
+            entity_id=user.id,
             actor_user_id=user.id,
             actor_role=str(user.role),
             ip_address=ip_address,
@@ -213,10 +200,12 @@ async def login(
             .where(User.id == user.id)
             .values(failed_attempts=attempts, locked_until=locked_until)
         )
-        await _audit(
+        await write_audit_log(
             session,
             company_id=user.company_id,
             action="LOGIN_FAILED",
+            entity_type="user",
+            entity_id=user.id,
             actor_user_id=user.id,
             actor_role=str(user.role),
             ip_address=ip_address,
@@ -243,10 +232,12 @@ async def login(
     await session.execute(update(User).where(User.id == user.id).values(**values))
 
     pair = await _issue_tokens(session, user, device_id=device_id, device_name=device_name)
-    await _audit(
+    await write_audit_log(
         session,
         company_id=user.company_id,
         action="LOGIN",
+        entity_type="user",
+        entity_id=user.id,
         actor_user_id=user.id,
         actor_role=str(user.role),
         ip_address=ip_address,
@@ -274,6 +265,20 @@ async def refresh(
     if stored is None:
         raise RefreshTokenError("Invalid refresh token.")
 
+    # refresh_tokens carries no company_id and no RLS (migration 0006), so
+    # the lookup above needed no context. `users` does, though, and the
+    # company isn't known until this row resolves it — auth_find_user_by_id
+    # (migration 0010) is the same sanctioned bypass login() uses. RLS is
+    # armed from its result before anything else here touches a tenant table
+    # (store_ids_for, a few lines below, queries `stores`).
+    user_result = await session.execute(
+        select(User).from_statement(text("SELECT * FROM auth_find_user_by_id(:user_id)")),
+        {"user_id": str(stored.user_id)},
+    )
+    user = user_result.scalar_one_or_none()
+    if user is not None:
+        await set_rls_context(session, company_id=user.company_id, role=str(user.role))
+
     now = datetime.now(tz=UTC)
 
     if stored.revoked_at is not None:
@@ -290,12 +295,13 @@ async def refresh(
             )
             .values(revoked_at=now)
         )
-        user = await session.get(User, stored.user_id)
         if user is not None:
-            await _audit(
+            await write_audit_log(
                 session,
                 company_id=user.company_id,
                 action="LOGIN_FAILED",
+                entity_type="user",
+                entity_id=user.id,
                 actor_user_id=user.id,
                 actor_role=str(user.role),
                 ip_address=ip_address,
@@ -312,7 +318,6 @@ async def refresh(
     if stored.expires_at <= now:
         raise RefreshTokenError("Refresh token has expired.")
 
-    user = await session.get(User, stored.user_id)
     if user is None or not user.is_active:
         raise RefreshTokenError("Invalid refresh token.")
 

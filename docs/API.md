@@ -4,7 +4,9 @@
 **Once the API exists, this document is regenerated from the OpenAPI schema at `/openapi.json`** —
 until then it is the contract the implementation must satisfy.
 
-- **Base URL:** `https://<railway-domain>/v1`
+- **Base URL:** `https://<railway-domain>` (no version prefix — every router in `app/main.py` is
+  registered unprefixed except `/health`/`/health/ready`, which stay unversioned by convention;
+  confirmed against the 425-test backend suite, which hits every path bare)
 - **Auth:** `Authorization: Bearer <access_jwt>`
 - **Content type:** `application/json` unless noted
 
@@ -27,7 +29,7 @@ Every mutable row carries a `version`. Updates require either an `If-Match: <ver
 `version` field in the body. A mismatch returns **409**.
 
 ```
-PATCH /v1/records/{id}
+PATCH /records/{id}
 If-Match: 3
 ```
 
@@ -36,7 +38,7 @@ If-Match: 3
 Lists are cursor-paginated:
 
 ```
-GET /v1/pages/{id}/records?cursor=eyJ...&limit=50
+GET /pages/{id}/records?cursor=eyJ...&limit=50
 ```
 
 ```json
@@ -126,7 +128,7 @@ afterwards — only the Owner, via `PATCH /records/{id}/protected-field`.
 The one workflow with a dedicated endpoint, because it spans two tables:
 
 ```
-GET /v1/reconciliation?from=2026-09-01&to=2026-09-30
+GET /reconciliation?from=2026-09-01&to=2026-09-30
 ```
 
 ```json
@@ -285,7 +287,7 @@ rules. A manager sees only granted pages — an ungranted page is absent from th
 `name` only. Narrowing a type (e.g. `TEXT → NUMBER`) requires a dry run first:
 
 ```
-POST /v1/columns/{id}/narrow-dry-run  →  { "would_fail": 14, "sample_failures": [ ... ] }
+POST /columns/{id}/narrow-dry-run  →  { "would_fail": 14, "sample_failures": [ ... ] }
 ```
 
 Deleting archives (`is_archived = true`); the old definition and values reach the audit log before
