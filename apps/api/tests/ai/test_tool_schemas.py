@@ -154,12 +154,16 @@ class TestEveryRegisteredToolPassesSchemaSafety:
     def test_all_real_tools_have_safe_schemas(self) -> None:
         import importlib
 
+        # `_clean_registry` (autouse) wipes TOOL_REGISTRY for test isolation,
+        # but a plain `import_module` no-ops on a module Python already has
+        # cached — it would not re-run the `register_tool(...)` calls at
+        # that module's top level. `reload` forces them to run again here.
         for module_name in (
             "app.ai.tools.discovery_tools",
             "app.ai.tools.read_tools",
             "app.ai.tools.entity_tools",
         ):
-            importlib.import_module(module_name)
+            importlib.reload(importlib.import_module(module_name))
 
         assert TOOL_REGISTRY, "expected at least one real AI tool to be registered"
         for tool in TOOL_REGISTRY.values():
