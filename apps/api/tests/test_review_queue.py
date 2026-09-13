@@ -10,6 +10,8 @@ from __future__ import annotations
 import uuid
 
 from httpx import AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _login(client: AsyncClient, email: str, password: str) -> str:
@@ -40,18 +42,16 @@ async def _create_page(client: AsyncClient, headers: dict[str, str]) -> str:
     return str(resp.json()["id"])
 
 
-async def _add_warning_rule(client: AsyncClient, headers: dict[str, str], page_id: str) -> None:
-    resp = await client.post(
-        f"/pages/{page_id}/validations",
-        json={
-            "name": "Large amount",
-            "expression": "amount <= 100",
-            "severity": "WARNING",
-            "message": "Amount exceeds the normal range.",
-        },
-        headers=headers,
+async def _flag_needs_review(session: AsyncSession, record_id: str) -> None:
+    """Validation rules (the feature that used to set this from a WARNING
+    rule) are gone — flag the record directly. `needs_review` is still a
+    real, independent platform field (review-queue filtering, the
+    `REVIEW_QUEUE` dashboard widget type); this just sets it the only way
+    left to."""
+    await session.execute(
+        text("UPDATE records SET needs_review = true WHERE id = :id"), {"id": record_id}
     )
-    assert resp.status_code == 201, resp.text
+    await session.commit()
 
 
 async def _create_record(
@@ -68,14 +68,14 @@ async def _create_record(
 
 class TestNeedsReviewFilter:
     async def test_filtering_by_needs_review_true_returns_exactly_the_flagged_records(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         headers = await _owner_headers(client, owner_password)
         page_id = await _create_page(client, headers)
-        await _add_warning_rule(client, headers, page_id)
 
         flagged = await _create_record(client, headers, page_id, amount="500.00")
-        assert flagged["needs_review"] is True
+        assert flagged["needs_review"] is False
+        await _flag_needs_review(session, flagged["id"])
         clean = await _create_record(client, headers, page_id, amount="10.00")
         assert clean["needs_review"] is False
 
@@ -89,13 +89,13 @@ class TestNeedsReviewFilter:
         assert {i["id"] for i in items} == {flagged["id"]}
 
     async def test_filtering_by_needs_review_false_returns_the_rest(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         headers = await _owner_headers(client, owner_password)
         page_id = await _create_page(client, headers)
-        await _add_warning_rule(client, headers, page_id)
 
-        await _create_record(client, headers, page_id, amount="500.00")
+        flagged = await _create_record(client, headers, page_id, amount="500.00")
+        await _flag_needs_review(session, flagged["id"])
         clean = await _create_record(client, headers, page_id, amount="10.00")
 
         resp = await client.post(

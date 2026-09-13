@@ -53,9 +53,7 @@ from app.schemas.dashboard import (
     ReconciliationItem,
     TrendConfig,
     TrendPoint,
-    WidgetCreateRequest,
     WidgetEvaluationResponse,
-    WidgetSuggestion,
     WidgetUpdateRequest,
 )
 from app.schemas.record import AggregateRequest, QueryRequest
@@ -115,19 +113,12 @@ _CONFIG_MODELS = {
 }
 
 
-async def _resolve_page(session: AsyncSession, ctx: SecurityContext, page_key: str) -> Page:
-    page = await page_service.get_page_by_key(session, ctx.company_id, page_key)
-    if page is None:
-        raise ValidationFailedError(f"No such page: {page_key!r}.")
-    return page
-
-
 def _validate_config(widget_type: str, columns: list[PageColumn], config: dict) -> dict:
     """Parses `config` into the type-specific model (catching shape
     mistakes) and confirms every column it names is real on this page — the
     same "fail at save, never at read" principle every other schema
     validation in this codebase already follows. Returns the normalized
-    dict `create_widget`/`update_widget` actually store."""
+    dict `update_widget` actually stores."""
     model = _CONFIG_MODELS.get(widget_type)
     if model is None:
         return {}
@@ -154,40 +145,6 @@ def _validate_config(widget_type: str, columns: list[PageColumn], config: dict) 
         raise ValidationFailedError(f"Unknown column(s) for this page: {sorted(unknown)}.")
 
     return parsed.model_dump(mode="json")
-
-
-async def create_widget(
-    session: AsyncSession, ctx: SecurityContext, payload: WidgetCreateRequest
-) -> DashboardWidget:
-    page = await _resolve_page(session, ctx, payload.page_key)
-    columns = await page_service.get_page_columns(session, page.id)
-    config = _validate_config(payload.widget_type, columns, payload.config)
-
-    widget = DashboardWidget(
-        company_id=ctx.company_id,
-        page_id=page.id,
-        title=payload.title,
-        widget_type=payload.widget_type,
-        config=config,
-        position=payload.position,
-        visible_to=payload.visible_to,
-        created_by=ctx.user_id,
-    )
-    session.add(widget)
-    await session.flush()
-
-    await write_audit_log(
-        session,
-        company_id=ctx.company_id,
-        action="DASHBOARD_WIDGET_CREATE",
-        entity_type="dashboard_widget",
-        entity_id=widget.id,
-        page_id=page.id,
-        actor_user_id=ctx.user_id,
-        actor_role=ctx.role.value,
-        new_data={"title": widget.title, "widget_type": widget.widget_type},
-    )
-    return widget
 
 
 async def get_widget(
@@ -403,68 +360,6 @@ async def evaluate_widget(
         )
 
     raise ValidationFailedError(f"Unknown widget_type: {widget.widget_type!r}.")
-
-
-async def suggest_starter_widgets(
-    session: AsyncSession, ctx: SecurityContext
-) -> list[WidgetSuggestion]:
-    """Never persisted (plan section 15.3) — synthesized fresh from whatever
-    of the six system pages exist for this company. Only offered while the
-    Owner hasn't already configured any widgets, so this never nags someone
-    who has already built their own dashboard."""
-    existing = await session.execute(
-        select(func.count())
-        .select_from(DashboardWidget)
-        .where(DashboardWidget.company_id == ctx.company_id)
-    )
-    if existing.scalar_one() > 0:
-        return []
-
-    suggestions: list[WidgetSuggestion] = []
-    if await page_service.get_page_by_key(session, ctx.company_id, "expenses") is not None:
-        suggestions.append(
-            WidgetSuggestion(
-                title="This month's expenses",
-                widget_type="METRIC",
-                page_key="expenses",
-                config={"metric": "sum", "column": "amount", "period": "current_month"},
-            )
-        )
-    if await page_service.get_page_by_key(session, ctx.company_id, "daily_revenue") is not None:
-        suggestions.append(
-            WidgetSuggestion(
-                title="Revenue by day",
-                widget_type="TREND",
-                page_key="daily_revenue",
-                config={"column": "total_revenue", "metric": "sum", "bucket": "day", "days": 30},
-            )
-        )
-    if await page_service.get_page_by_key(session, ctx.company_id, "cheques") is not None:
-        suggestions.append(
-            WidgetSuggestion(
-                title="Pending cheques",
-                widget_type="LIST",
-                page_key="cheques",
-                config={
-                    "filters": [{"column": "cheque_status", "op": "eq", "value": "PENDING"}],
-                    "sort": [{"column": "business_date", "direction": "asc"}],
-                    "limit": 10,
-                },
-            )
-        )
-    if (
-        await page_service.get_page_by_key(session, ctx.company_id, "daily_revenue") is not None
-        and await page_service.get_page_by_key(session, ctx.company_id, "cash_ledger") is not None
-    ):
-        suggestions.append(
-            WidgetSuggestion(
-                title="Today's reconciliation",
-                widget_type="METRIC",
-                page_key="daily_revenue",
-                config={"metric": "sum", "column": "total_revenue", "period": "current_month"},
-            )
-        )
-    return suggestions
 
 
 async def get_digest(

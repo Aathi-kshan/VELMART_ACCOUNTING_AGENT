@@ -1,5 +1,5 @@
-"""The formula/`page_validations` function library (plan section 11.1, P4
-§2). `FORMULA_FUNCTIONS` is the single source of truth both `parser.py`
+"""The FORMULA function library (plan section 11.1, P4 §2). `FORMULA_FUNCTIONS`
+is the single source of truth both `parser.py`
 (which `Call` names are legal) and `evaluator.py`/`sql_compiler.py` (what
 they actually do) import — the allowed list and the implemented list can
 never drift apart because there is only one list.

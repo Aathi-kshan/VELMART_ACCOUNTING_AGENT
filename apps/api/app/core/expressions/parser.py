@@ -1,5 +1,6 @@
-"""Safe expression parser (plan section 11.1, P4 §1) — the grammar shared by
-FORMULA columns and `page_validations` rules.
+"""Safe expression parser (plan section 11.1, P4 §1) — the grammar FORMULA
+columns compile through. (`page_validations` rules also used this grammar
+until that feature was removed entirely.)
 
 **Design: default-deny, not default-allow-with-a-blocklist.** `_ALLOWED_NODES`
 is the only thing this module trusts; any AST node type not in that set is
@@ -98,7 +99,7 @@ def _depth(node: ast.AST, current: int = 0) -> int:
 
 
 def parse_expression(expression: str, available_names: frozenset[str]) -> ParsedExpression:
-    """Parse and validate a formula or `page_validations` expression.
+    """Parse and validate a FORMULA expression.
 
     `available_names` is every operand this expression may legally
     reference — the page's own column keys (FORMULA columns included, so

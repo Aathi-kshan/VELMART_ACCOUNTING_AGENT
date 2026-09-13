@@ -84,25 +84,13 @@ PERMISSION_MATRIX: tuple[PermissionRule, ...] = (
     PermissionRule("PATCH", "/records/{record_id}/protected-field", Access.OWNER_ONLY),
     # P3.5 Part 2 — CSV export (plan section 13.2)
     PermissionRule("POST", "/pages/{page_id}/export", Access.OWNER_ONLY),
-    # P3.5 Part 3 — CSV import (plan section 13.1)
-    PermissionRule("POST", "/pages/{page_id}/import/preview", Access.OWNER_ONLY),
-    PermissionRule("POST", "/pages/{page_id}/import/validate", Access.OWNER_ONLY),
-    PermissionRule("POST", "/pages/{page_id}/import/commit", Access.OWNER_ONLY),
-    PermissionRule("GET", "/pages/{page_id}/import-batches", Access.OWNER_ONLY),
-    PermissionRule("POST", "/import-batches/{batch_id}/rollback", Access.OWNER_ONLY),
-    # P4 — page_validations (plan section 11.3, P4 §6)
-    PermissionRule("POST", "/pages/{page_id}/validations", Access.OWNER_ONLY),
-    PermissionRule("PATCH", "/validations/{rule_id}", Access.OWNER_ONLY),
-    PermissionRule("DELETE", "/validations/{rule_id}", Access.OWNER_ONLY),
     # P4 — ledger pages, reversal, running balance (plan section 11.5, P4 §8)
     PermissionRule("POST", "/records/{record_id}/reverse", Access.OWNER_ONLY),
     # P5 — audit log read API (plan section 18.3)
     PermissionRule("GET", "/audit-logs/export", Access.OWNER_ONLY),
     # P5 — dashboard widgets (plan section 15)
-    PermissionRule("POST", "/dashboard/widgets", Access.OWNER_ONLY),
     PermissionRule("PATCH", "/dashboard/widgets/{widget_id}", Access.OWNER_ONLY),
     PermissionRule("DELETE", "/dashboard/widgets/{widget_id}", Access.OWNER_ONLY),
-    PermissionRule("GET", "/dashboard/suggestions", Access.OWNER_ONLY),
     PermissionRule("GET", "/dashboard/digest", Access.AUTHENTICATED),
 )
 

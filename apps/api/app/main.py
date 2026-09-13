@@ -27,13 +27,11 @@ from app.routers import (
     dashboard,
     exports,
     health,
-    imports,
     pages,
     query,
     records,
     stores,
     users,
-    validations,
 )
 
 log = get_logger(__name__)
@@ -131,8 +129,6 @@ def create_app() -> FastAPI:
     app.include_router(query.router)
     app.include_router(dashboard.router)
     app.include_router(exports.router)
-    app.include_router(imports.router)
-    app.include_router(validations.router)
     app.include_router(audit.router)
     return app
 

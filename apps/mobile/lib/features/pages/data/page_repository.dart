@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -7,11 +6,9 @@ import 'package:uuid/uuid.dart';
 import '../../../core/network/api_exception.dart';
 import '../../auth/domain/user.dart';
 import '../domain/column.dart';
-import '../domain/csv_import.dart';
 import '../domain/page.dart';
 import '../domain/record.dart';
 import '../domain/store.dart';
-import '../domain/validation_rule.dart';
 
 /// Every endpoint P3's backend exposes, one method each (plan sections
 /// 3.10-3.11, 21.2). Thin by design: this repository does no validation and
@@ -153,53 +150,6 @@ class PageRepository {
         return response.data!.cast<Map<String, dynamic>>().map(AccessGrant.fromJson).toList();
       });
 
-  // --- page_validations (P4 §6) ---------------------------------------
-
-  Future<ValidationRule> createValidation(
-    String pageId, {
-    required String name,
-    required String expression,
-    required ValidationSeverity severity,
-    required String message,
-  }) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>(
-      '/pages/$pageId/validations',
-      data: {
-        'name': name,
-        'expression': expression,
-        'severity': severity.wire,
-        'message': message,
-      },
-    );
-    return ValidationRule.fromJson(response.data!);
-  });
-
-  Future<ValidationRule> updateValidation(
-    String ruleId, {
-    String? name,
-    String? expression,
-    ValidationSeverity? severity,
-    String? message,
-    bool? isActive,
-  }) => mapApiErrors(() async {
-    final response = await dio.patch<Map<String, dynamic>>(
-      '/validations/$ruleId',
-      data: {
-        if (name != null) 'name': name,
-        if (expression != null) 'expression': expression,
-        if (severity != null) 'severity': severity.wire,
-        if (message != null) 'message': message,
-        if (isActive != null) 'is_active': isActive,
-      },
-    );
-    return ValidationRule.fromJson(response.data!);
-  });
-
-  Future<ValidationRule> archiveValidation(String ruleId) => mapApiErrors(() async {
-    final response = await dio.delete<Map<String, dynamic>>('/validations/$ruleId');
-    return ValidationRule.fromJson(response.data!);
-  });
-
   // --- records --------------------------------------------------------
 
   Future<Paginated<PageRecord>> listRecords(
@@ -340,64 +290,6 @@ class PageRepository {
       throw ApiException.fromDio(decodeBytesResponseError(error));
     }
   }
-
-  // --- import -------------------------------------------------------------
-
-  MultipartFile _csvFile(Uint8List bytes, String fileName) =>
-      MultipartFile.fromBytes(bytes, filename: fileName);
-
-  Future<ImportPreview> previewImport(
-    String pageId, {
-    required Uint8List bytes,
-    required String fileName,
-  }) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>(
-      '/pages/$pageId/import/preview',
-      data: FormData.fromMap({'file': _csvFile(bytes, fileName)}),
-    );
-    return ImportPreview.fromJson(response.data!);
-  });
-
-  Future<ImportValidation> validateImport(
-    String pageId, {
-    required Uint8List bytes,
-    required String fileName,
-    required ImportMapping mapping,
-  }) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>(
-      '/pages/$pageId/import/validate',
-      data: FormData.fromMap({
-        'file': _csvFile(bytes, fileName),
-        'payload': jsonEncode(mapping.toJson()),
-      }),
-    );
-    return ImportValidation.fromJson(response.data!);
-  });
-
-  Future<ImportCommitResult> commitImport(
-    String pageId, {
-    required Uint8List bytes,
-    required String fileName,
-    required ImportMapping mapping,
-  }) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>(
-      '/pages/$pageId/import/commit',
-      data: FormData.fromMap({
-        'file': _csvFile(bytes, fileName),
-        'payload': jsonEncode(mapping.toJson()),
-      }),
-    );
-    return ImportCommitResult.fromJson(response.data!);
-  });
-
-  Future<List<ImportBatch>> listImportBatches(String pageId) => mapApiErrors(() async {
-    final response = await dio.get<List<dynamic>>('/pages/$pageId/import-batches');
-    return response.data!.cast<Map<String, dynamic>>().map(ImportBatch.fromJson).toList();
-  });
-
-  Future<void> rollbackImport(String batchId) => mapApiErrors(() async {
-    await dio.post<void>('/import-batches/$batchId/rollback');
-  });
 
   // --- reference pickers ---------------------------------------------------
 

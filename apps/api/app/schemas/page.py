@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.page import PageKind
 from app.schemas.column import ColumnDefinition, ColumnOut
-from app.schemas.validation import ValidationRuleOut
 
 
 class CreatePageRequest(BaseModel):
@@ -77,9 +76,6 @@ class PageSchemaOut(PageOut):
     #: (non-system) page. A client renders these read-only: the write API
     #: rejects any value supplied for one (plan section 3.5.8).
     generated_columns: list[str] = Field(default_factory=list)
-    #: Active `page_validations` rules (P4 §6) — archived ones are omitted,
-    #: same as `columns` already omits archived columns.
-    validations: list[ValidationRuleOut] = Field(default_factory=list)
 
 
 class AccessGrant(BaseModel):

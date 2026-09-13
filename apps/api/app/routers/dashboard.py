@@ -20,10 +20,8 @@ from app.dependencies.guards import require_owner, require_page_access
 from app.schemas.dashboard import (
     DailyDigestOut,
     ReconciliationResponse,
-    WidgetCreateRequest,
     WidgetEvaluationResponse,
     WidgetOut,
-    WidgetSuggestion,
     WidgetUpdateRequest,
 )
 from app.services import dashboard_service, page_service
@@ -51,16 +49,6 @@ async def get_reconciliation(
 
     items = await dashboard_service.get_reconciliation(session, ctx, from_, to)
     return ReconciliationResponse(items=items)
-
-
-@router.post("/dashboard/widgets", response_model=WidgetOut, status_code=201)
-async def create_widget(
-    payload: WidgetCreateRequest,
-    ctx: SecurityContext = Depends(require_owner),
-    session: AsyncSession = Depends(get_rls_session),
-) -> WidgetOut:
-    widget = await dashboard_service.create_widget(session, ctx, payload)
-    return WidgetOut.model_validate(widget, from_attributes=True)
 
 
 @router.get("/dashboard/widgets", response_model=list[WidgetOut])
@@ -100,14 +88,6 @@ async def get_widget_data(
 ) -> WidgetEvaluationResponse:
     widget = await dashboard_service.get_widget(session, ctx, widget_id)
     return await dashboard_service.evaluate_widget(session, ctx, widget)
-
-
-@router.get("/dashboard/suggestions", response_model=list[WidgetSuggestion])
-async def get_suggestions(
-    ctx: SecurityContext = Depends(require_owner),
-    session: AsyncSession = Depends(get_rls_session),
-) -> list[WidgetSuggestion]:
-    return await dashboard_service.suggest_starter_widgets(session, ctx)
 
 
 @router.get("/dashboard/digest", response_model=DailyDigestOut | None)

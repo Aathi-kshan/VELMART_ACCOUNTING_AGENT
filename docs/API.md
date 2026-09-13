@@ -67,7 +67,7 @@ GET /pages/{id}/records?cursor=eyJ...&limit=50
 | `403` | Permission denied — **audited** as `PERMISSION_DENIED` |
 | `404` | Not found, **or** not visible to this caller (a manager without a page grant gets 404, not 403 — a page they cannot see should not be confirmed to exist) |
 | `409` | Version conflict, expired/stale AI proposal, or a page `key` collision |
-| `422` | Validation failure against the page schema or an `ERROR` validation rule |
+| `422` | Validation failure against the page schema |
 | `429` | Rate limit exceeded |
 
 Common `code` values: `PROTECTED_FIELD_FORBIDDEN`, `MANAGER_CANNOT_EDIT`, `PAGE_ACCESS_DENIED`,
@@ -115,7 +115,7 @@ Two rules apply only to them:
 database-generated (`cash + card`); supplying either in a write body is rejected. They are always
 present in responses.
 
-Database constraints surface as **422 `VALIDATION_FAILED`** from any path — API, CSV import, or AI
+Database constraints surface as **422 `VALIDATION_FAILED`** from any path — the API or an AI
 proposal apply. Every money column on these tables carries `CHECK (>= 0)`.
 
 **`cheques` status:** the protected column is `cheque_status` (`PENDING` | `PAID`), labelled
@@ -172,7 +172,6 @@ dates; a manager sees only what their store scope and page grants allow.
 | GET | `/pages/{id}/schema` | ✅ | 🟡 granted |
 | **POST** | `/pages/{id}/columns` | ✅ | **❌** |
 | **PATCH / DELETE** | `/columns/{id}` | ✅ | **❌** |
-| **POST / PATCH / DELETE** | `/pages/{id}/validations` | ✅ | **❌** |
 | **PUT** | `/pages/{id}/access` | ✅ | **❌** |
 | GET | `/pages/{id}/records` | ✅ | 🟡 granted |
 | POST | `/pages/{id}/records` | ✅ | 🟡 granted + `can_create` |
@@ -187,10 +186,9 @@ dates; a manager sees only what their store scope and page grants allow.
 | POST | `/attachments/{id}/complete` | ✅ | ✅ |
 | GET | `/attachments/{id}/url` | ✅ | 🟡 granted |
 | DELETE | `/attachments/{id}` | ✅ | ❌ |
-| **POST** | `/imports`, `/imports/{id}/confirm`, `/imports/{id}/rollback` | ✅ | **❌** |
 | **POST** | `/exports` | ✅ | **❌** |
 | GET | `/dashboard` | ✅ | 🟡 permitted widgets |
-| **POST / PATCH / DELETE** | `/dashboard/widgets` | ✅ | **❌** |
+| **PATCH / DELETE** | `/dashboard/widgets/{id}` | ✅ | **❌** |
 | GET | `/reconciliation` | ✅ | 🟡 granted + store scope |
 | GET | `/audit` | ✅ | 🟡 own actions |
 | **POST** | `/ai/sessions` | ✅ | **❌** |
@@ -245,7 +243,7 @@ never carried in the token, so a revoked grant takes effect immediately.
 
 ---
 
-## 4. Pages, columns, validations, access
+## 4. Pages, columns, access
 
 ### `POST /pages` — Owner only
 
@@ -293,18 +291,6 @@ POST /columns/{id}/narrow-dry-run  →  { "would_fail": 14, "sample_failures": [
 Deleting archives (`is_archived = true`); the old definition and values reach the audit log before
 any hard delete.
 
-### `POST /pages/{id}/validations` — Owner only
-
-```json
-{ "name": "Revenue must balance",
-  "expression": "abs(total - (cash + card + other - returns)) <= 100",
-  "severity": "ERROR",
-  "message": "Revenue does not balance — check the cash and card figures." }
-```
-
-`ERROR` blocks the save (422). `WARNING` saves the record and sets `needs_review = true`, surfacing
-it in the review queue and to the AI.
-
 ### `PUT /pages/{id}/access` — Owner only
 
 ```json
@@ -340,8 +326,7 @@ Idempotency-Key: 8f14e45f-ceea-467a-9f42-1c0eb5b1a3d7
 `FORMULA` values.
 
 Server-side on write: page access + `can_create` → type/required/options/reference validation →
-`page_validations` (ERROR blocks, WARNING flags) → `business_date` derivation → projection column
-population → audit entry.
+`business_date` derivation → projection column population → audit entry.
 
 A manager supplying a value for a **protected** column gets **403** — the protected flag closes the
 create-time loophole.
@@ -433,19 +418,14 @@ sequenceDiagram
 
 ---
 
-## 7. Import / export — Owner only
+## 7. Export — Owner only
+
+CSV import was a separate feature and has been removed entirely (product decision) — this section
+covers export only now.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /imports` | Upload a CSV (≤ 10 MB), returns detected headers + a suggested mapping |
-| `POST /imports/{id}/confirm` | Validate **every** row, then chunked insert (500/transaction) |
-| `POST /imports/{id}/rollback` | Remove exactly the batch — available for 24 hours |
 | `POST /exports` | Build a filtered CSV; returns a presigned URL valid 15 minutes |
-
-Validation covers every row *before anything is written* — a partial import that fails at row 4,000
-is worse than no import. Money strings are normalised (strip `Rs.`, strip separators, `(1,234.00)`
-is negative). Ambiguous dates prompt the Owner; never guessed. `RECORD_REF` columns match on the
-target page's display column and report unmatched values as errors rather than creating stubs.
 
 Exports are UTF-8 **with a BOM** so Excel opens them correctly; formula columns export as computed
 values. **Every export writes an audit entry** — it is a data-egress event.
@@ -454,15 +434,11 @@ values. **Every export writes an audit entry** — it is a data-egress event.
 
 ## 8. Dashboard and audit
 
-### `GET /dashboard` · `POST /dashboard/widgets`
+### `GET /dashboard`
 
-```json
-{ "title": "This month's expenses", "widget_type": "METRIC", "page_id": "uuid",
-  "config": { "column": "amount", "agg": "sum", "period": "current_month",
-              "filters": [ { "column": "category", "op": "eq", "value": "Electricity" } ],
-              "group_by": "category", "limit": 5 },
-  "visible_to": null }
-```
+Widget *creation* (there is no `POST /dashboard/widgets` any more — that ability was removed by
+product decision) — an Owner can still edit (`PATCH`) or delete (`DELETE`) a widget that already
+exists, and everyone can view/evaluate one, but nothing in the app creates a new one.
 
 Types: `METRIC`, `TREND`, `BREAKDOWN`, `LIST`, `REVIEW_QUEUE`. `visible_to: null` means everyone
 with page access. Managers see only widgets whose source page they can access.

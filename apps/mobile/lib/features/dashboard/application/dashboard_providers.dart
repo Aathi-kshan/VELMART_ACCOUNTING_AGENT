@@ -20,10 +20,8 @@ final reconciliationProvider = FutureProvider<List<ReconciliationItem>>((ref) {
 });
 
 /// Every widget the caller can see, already server-filtered (P5). Invalidate
-/// after create/update/delete to refetch — `home_screen.dart` and
-/// `widget_builder_screen.dart` both do this rather than hand-patching the
-/// list locally, since a create can also change which starter suggestions
-/// still apply.
+/// after an update/delete to refetch — `home_screen.dart` does this rather
+/// than hand-patching the list locally.
 final dashboardWidgetsProvider = FutureProvider<List<DashboardWidget>>((ref) {
   return ref.watch(dashboardRepositoryProvider).listWidgets();
 });
@@ -32,11 +30,4 @@ final dashboardWidgetsProvider = FutureProvider<List<DashboardWidget>>((ref) {
 /// several independently and only the one that changed re-fetches.
 final widgetDataProvider = FutureProvider.family<WidgetEvaluation, String>((ref, widgetId) {
   return ref.watch(dashboardRepositoryProvider).getWidgetData(widgetId);
-});
-
-/// Starter suggestions — empty once the Owner has configured any widget at
-/// all (plan section 15.3), so this is safe to always fetch and just show
-/// nothing when it comes back empty.
-final widgetSuggestionsProvider = FutureProvider<List<WidgetSuggestion>>((ref) {
-  return ref.watch(dashboardRepositoryProvider).getSuggestions();
 });

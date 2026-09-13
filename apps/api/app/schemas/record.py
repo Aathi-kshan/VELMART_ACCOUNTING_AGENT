@@ -80,9 +80,8 @@ class ReverseRecordRequest(BaseModel):
     pages only. `version` is the *original* record's optimistic-locking
     version. Omitting `data` means "void this record, nothing replaces it";
     supplying it creates a new `ACTIVE` record linked via `reverses_id`,
-    validated/formula-computed/`page_validations`-checked exactly like an
-    ordinary create (`record_service.create_record`'s own pipeline, not a
-    parallel one)."""
+    validated/formula-computed exactly like an ordinary create
+    (`record_service.create_record`'s own pipeline, not a parallel one)."""
 
     version: int
     data: dict[str, Any] | None = None

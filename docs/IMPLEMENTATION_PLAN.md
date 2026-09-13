@@ -31,6 +31,16 @@ Two rules that override any schedule pressure:
 
 ## Current status
 
+> **Later feature removal (post-P5), read this before the rows below:** CSV import, the entire
+> `page_validations` (Validation Rules) system, and dashboard widget *creation* (`POST
+> /dashboard/widgets`, starter suggestions, the "Add widget" flow) were all removed completely by
+> product decision — code, schema, tests, docs, dependencies. Every row below that describes
+> building one of these (P3.5's CSV import half, P4's `page_validations`, P5's widget CRUD/starter
+> suggestions) is an accurate historical record of what was built *at the time*, not a description
+> of the current codebase. CSV **export**, dashboard widget **viewing/evaluation**, and widget
+> **edit/delete** (an Owner can still `PATCH`/`DELETE` an existing widget) were all explicitly kept
+> and are unaffected. See `docs/PROJECT_PLAN.md` §11.3, §13, §15 for the current, accurate state.
+
 | Item | State |
 |---|---|
 | Monorepo file structure (§22) | ✅ Scaffolded — all directories and files exist, empty |
@@ -545,7 +555,7 @@ Copied from §3.2 — these are the contract, not aspirations.
 - [ ] Permission matrix suite green; every manager-denial test green
 - [ ] Page access grant tests green
 - [ ] Tenancy isolation suite green
-- [ ] Formula engine, validation rules, money precision, and business-date tests green
+- [ ] Formula engine, money precision, and business-date tests green
 - [ ] Filter and sort injection tests green
 - [ ] **A non-technical Owner has built a real table unaided and entered records into it**
 - [ ] The Owner's first four or five tables built and populated with opening data
@@ -600,9 +610,9 @@ Copied from §3.2 — these are the contract, not aspirations.
 | P1 Foundation | 2 | 🟡 Code done, not deployed | Login/refresh/lockout/audit chain green against real Postgres; not yet verified against a Railway deployment from phone + laptop |
 | P2 Permissions | 2 | ✅ Done | Matrix suite green (136 tests total, real RLS enforcement as `app_user`) |
 | P3 Page engine ★ | 4 | 🟡 Code done and compiler-verified; usability gate unrun | Backend verified via 227 automated tests against real Postgres; client now compiler-verified (`dart analyze --fatal-infos` clean, `flutter test` green) but the "Owner builds a table unaided" *usability* gate is a human trial, still not run |
-| P3.5 Core business tables | 3 | ✅ Done (backend + Flutter both verified) | Storage parity, reserved keys, reconciliation, CSV import/export all green (297 tests); client compiler-verified |
-| P4 Financial workflows | 4 | ✅ Done (backend + Flutter both verified) | Formulas (both evaluator and SQL-compiled backends agree), cycle detection, `RECORD_REF` integrity, `page_validations`, protected columns (generalised beyond `cheques`), ledger reversal + running balance, review-queue filtering all green (364 tests); 100k-row volume benchmark run; client compiler-verified |
-| P5 Dashboard/Audit/Nightly ops | 2 | ✅ Done (backend + Flutter both verified); Attachments deferred | Widget CRUD + evaluation double-gated, full audit (read API, chain verify), nightly ops (chain verify, backup, idempotency cleanup, daily digest) all green (425 tests); CSV import/export already shipped in P3.5, Attachments not implemented; client compiler-verified |
+| P3.5 Core business tables | 3 | ✅ Done (backend + Flutter both verified) | Storage parity, reserved keys, reconciliation, CSV export all green (371 tests); client compiler-verified. **CSV import was later removed entirely** (product decision) — see the note atop "Current status" |
+| P4 Financial workflows | 4 | ✅ Done (backend + Flutter both verified) | Formulas (both evaluator and SQL-compiled backends agree), cycle detection, `RECORD_REF` integrity, protected columns (generalised beyond `cheques`), ledger reversal + running balance, review-queue filtering all green; 100k-row volume benchmark run; client compiler-verified. **`page_validations` (Validation Rules) was later removed entirely** — `needs_review`/review-queue filtering stays, it just has no remaining code path that sets it |
+| P5 Dashboard/Audit/Nightly ops | 2 | ✅ Done (backend + Flutter both verified); Attachments deferred | Widget viewing/evaluation + edit/delete, full audit (read API, chain verify), nightly ops (chain verify, backup, idempotency cleanup, daily digest) all green (371 tests); CSV export already shipped in P3.5, Attachments not implemented; client compiler-verified. **Widget *creation* (CRUD's "C") and CSV import were both later removed entirely** |
 | P6 Offline | 1.5 | ⏸️ Deferred — not on critical path | Deferred by explicit decision: current release assumes reliable internet. Plan drafted and reviewed but not implemented; revisit if unreliable connectivity becomes a real requirement |
 | P7 AI read | 3 | ⬜ Not started | ≥90% on two fixtures, zero wrong numbers |
 | P8 AI write | 2 | ⬜ Not started | 50 proposals, zero unintended changes |

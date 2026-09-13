@@ -77,31 +77,6 @@ class DashboardWidget {
   final String createdAt;
 }
 
-/// Never persisted until the Owner accepts it (plan section 15.3) —
-/// accepting one is just creating a widget with this same shape.
-class WidgetSuggestion {
-  const WidgetSuggestion({
-    required this.title,
-    required this.widgetType,
-    required this.pageKey,
-    required this.config,
-  });
-
-  factory WidgetSuggestion.fromJson(Map<String, dynamic> json) {
-    return WidgetSuggestion(
-      title: json['title'] as String,
-      widgetType: WidgetType.fromWire(json['widget_type'] as String),
-      pageKey: json['page_key'] as String,
-      config: (json['config'] as Map<String, dynamic>?) ?? const {},
-    );
-  }
-
-  final String title;
-  final WidgetType widgetType;
-  final String pageKey;
-  final Map<String, dynamic> config;
-}
-
 class TrendPoint {
   const TrendPoint({required this.bucket, required this.value});
 

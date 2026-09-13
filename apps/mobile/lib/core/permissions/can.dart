@@ -22,10 +22,6 @@ bool canCreatePage(UserRole role) => role == UserRole.owner;
 
 bool canManageColumns(UserRole role) => role == UserRole.owner;
 
-bool canManageValidations(UserRole role) => role == UserRole.owner;
-
-bool canImportCsv(UserRole role) => role == UserRole.owner;
-
 bool canExportCsv(UserRole role) => role == UserRole.owner;
 
 bool canUseAi(UserRole role) => role == UserRole.owner;
@@ -35,7 +31,5 @@ bool canManageUsers(UserRole role) => role == UserRole.owner;
 bool canManageStores(UserRole role) => role == UserRole.owner;
 
 bool canManageSettings(UserRole role) => role == UserRole.owner;
-
-bool canConfigureDashboard(UserRole role) => role == UserRole.owner;
 
 bool canExportAuditLog(UserRole role) => role == UserRole.owner;

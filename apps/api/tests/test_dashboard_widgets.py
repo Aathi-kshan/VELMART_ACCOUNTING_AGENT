@@ -1,11 +1,19 @@
-"""Configurable dashboard widgets (plan section 15, P5): CRUD, the five
-evaluation types (reusing `query_service.py`'s `aggregate`/`query_records`
-directly except `TREND`), the manager double-gate (`visible_to` role AND
-page view-access), and starter suggestions.
+"""Configurable dashboard widgets (plan section 15, P5): the five evaluation
+types (reusing `query_service.py`'s `aggregate`/`query_records` directly
+except `TREND`), and the manager double-gate (`visible_to` role AND page
+view-access).
+
+Widget *creation* (`POST /dashboard/widgets`) and the starter-suggestions
+endpoint were removed by explicit product decision — an Owner can still view,
+edit (`PATCH`), and delete (`DELETE`) a widget, but never create a new one
+through the app. Every test below that needs a widget to exist inserts one
+directly via SQL (the same pattern `test_permissions_matrix.py`'s
+`dashboard_widget` fixture already used) rather than through the API.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from decimal import Decimal
 
@@ -64,93 +72,58 @@ async def _rec(
     return resp.json()
 
 
-class TestWidgetCrud:
-    async def test_owner_can_create_a_metric_widget(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
-    ) -> None:
-        headers = await _owner_headers(client, owner_password)
-        page = await _create_page(client, headers, "Widget CRUD Page")
+async def _insert_widget(
+    session: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    page_id: str,
+    created_by: uuid.UUID,
+    title: str,
+    widget_type: str,
+    config: dict,
+    visible_to: str | None = None,
+) -> str:
+    """Seed a `dashboard_widgets` row directly — the only way to get a
+    widget into existence now that `POST /dashboard/widgets` is gone."""
+    widget_id = uuid.uuid4()
+    await session.execute(
+        text(
+            "INSERT INTO dashboard_widgets "
+            "(id, company_id, page_id, title, widget_type, config, visible_to, created_by) "
+            "VALUES (:id, :company_id, :page_id, :title, :widget_type, "
+            "CAST(:config AS jsonb), :visible_to, :created_by)"
+        ),
+        {
+            "id": str(widget_id),
+            "company_id": str(company_id),
+            "page_id": page_id,
+            "title": title,
+            "widget_type": widget_type,
+            "config": json.dumps(config),
+            "visible_to": visible_to,
+            "created_by": str(created_by),
+        },
+    )
+    await session.commit()
+    return str(widget_id)
 
-        resp = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Total spend",
-                "widget_type": "METRIC",
-                "page_key": page["key"],
-                "config": {"metric": "sum", "column": "amount", "period": "current_month"},
-            },
-            headers=headers,
-        )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["title"] == "Total spend"
 
-    async def test_manager_cannot_create_a_widget(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
-        manager: uuid.UUID, manager_password: str,
-    ) -> None:
-        owner_headers = await _owner_headers(client, owner_password)
-        page = await _create_page(client, owner_headers, "Manager Cannot Create")
-
-        manager_headers = await _manager_headers(client, manager_password)
-        resp = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Nope",
-                "widget_type": "METRIC",
-                "page_key": page["key"],
-                "config": {"metric": "sum", "column": "amount"},
-            },
-            headers=manager_headers,
-        )
-        assert resp.status_code == 403
-
-    async def test_create_writes_an_audit_entry(
+class TestWidgetCascade:
+    async def test_widget_on_a_deleted_page_cascades(
         self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
         company: uuid.UUID, session: AsyncSession,
     ) -> None:
         headers = await _owner_headers(client, owner_password)
-        page = await _create_page(client, headers, "Audit Widget Page")
-        resp = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Audited Widget",
-                "widget_type": "LIST",
-                "page_key": page["key"],
-                "config": {},
-            },
-            headers=headers,
-        )
-        assert resp.status_code == 201, resp.text
-
-        row = (
-            await session.execute(
-                text(
-                    "SELECT page_id, new_data FROM audit_logs "
-                    "WHERE company_id = :cid AND action = 'DASHBOARD_WIDGET_CREATE' "
-                    "ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"cid": str(company)},
-            )
-        ).one()
-        assert str(row.page_id) == page["id"]
-        assert row.new_data["title"] == "Audited Widget"
-
-    async def test_widget_on_a_deleted_page_cascades(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
-    ) -> None:
-        headers = await _owner_headers(client, owner_password)
         page = await _create_page(client, headers, "Cascade Test Page")
-        create = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Cascades",
-                "widget_type": "LIST",
-                "page_key": page["key"],
-                "config": {},
-            },
-            headers=headers,
+        widget_id = await _insert_widget(
+            session,
+            company_id=company,
+            page_id=page["id"],
+            created_by=owner,
+            title="Cascades",
+            widget_type="LIST",
+            config={},
         )
-        widget_id = create.json()["id"]
 
         # A hard delete — the FK's own `ON DELETE CASCADE` (migration 0004),
         # not the app's soft-archive `DELETE /pages/{id}`, which never
@@ -169,7 +142,7 @@ class TestWidgetCrud:
 class TestVisibilityDoubleGate:
     async def test_manager_sees_only_widgets_visible_to_their_role(
         self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
-        manager: uuid.UUID, manager_password: str,
+        manager: uuid.UUID, manager_password: str, company: uuid.UUID, session: AsyncSession,
     ) -> None:
         owner_headers = await _owner_headers(client, owner_password)
         page = await _create_page(client, owner_headers, "Role Visibility Page")
@@ -178,29 +151,14 @@ class TestVisibilityDoubleGate:
             json={"grants": [{"user_id": str(manager), "can_view": True, "can_create": True}]},
             headers=owner_headers,
         )
-        owner_only = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Owner Only Widget",
-                "widget_type": "LIST",
-                "page_key": page["key"],
-                "config": {},
-                "visible_to": "OWNER",
-            },
-            headers=owner_headers,
+        await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="Owner Only Widget", widget_type="LIST", config={}, visible_to="OWNER",
         )
-        assert owner_only.status_code == 201, owner_only.text
-        everyone = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Everyone Widget",
-                "widget_type": "LIST",
-                "page_key": page["key"],
-                "config": {},
-            },
-            headers=owner_headers,
+        await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="Everyone Widget", widget_type="LIST", config={},
         )
-        assert everyone.status_code == 201, everyone.text
 
         manager_headers = await _manager_headers(client, manager_password)
         resp = await client.get("/dashboard/widgets", headers=manager_headers)
@@ -210,7 +168,7 @@ class TestVisibilityDoubleGate:
 
     async def test_manager_sees_only_widgets_on_pages_they_can_view(
         self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
-        manager: uuid.UUID, manager_password: str,
+        manager: uuid.UUID, manager_password: str, company: uuid.UUID, session: AsyncSession,
     ) -> None:
         owner_headers = await _owner_headers(client, owner_password)
         granted_page = await _create_page(client, owner_headers, "Page Visibility Granted")
@@ -220,25 +178,13 @@ class TestVisibilityDoubleGate:
             json={"grants": [{"user_id": str(manager), "can_view": True, "can_create": True}]},
             headers=owner_headers,
         )
-        await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "On Granted Page",
-                "widget_type": "LIST",
-                "page_key": granted_page["key"],
-                "config": {},
-            },
-            headers=owner_headers,
+        await _insert_widget(
+            session, company_id=company, page_id=granted_page["id"], created_by=owner,
+            title="On Granted Page", widget_type="LIST", config={},
         )
-        await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "On Ungranted Page",
-                "widget_type": "LIST",
-                "page_key": ungranted_page["key"],
-                "config": {},
-            },
-            headers=owner_headers,
+        await _insert_widget(
+            session, company_id=company, page_id=ungranted_page["id"], created_by=owner,
+            title="On Ungranted Page", widget_type="LIST", config={},
         )
 
         manager_headers = await _manager_headers(client, manager_password)
@@ -249,7 +195,7 @@ class TestVisibilityDoubleGate:
 
     async def test_manager_cannot_evaluate_a_widget_hidden_from_their_role(
         self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
-        manager: uuid.UUID, manager_password: str,
+        manager: uuid.UUID, manager_password: str, company: uuid.UUID, session: AsyncSession,
     ) -> None:
         """The double gate applies to `GET .../data` too, not just the list
         — a manager can't bypass `visible_to` by guessing/enumerating ids."""
@@ -260,18 +206,10 @@ class TestVisibilityDoubleGate:
             json={"grants": [{"user_id": str(manager), "can_view": True, "can_create": True}]},
             headers=owner_headers,
         )
-        create = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Owner Only Data",
-                "widget_type": "LIST",
-                "page_key": page["key"],
-                "config": {},
-                "visible_to": "OWNER",
-            },
-            headers=owner_headers,
+        widget_id = await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="Owner Only Data", widget_type="LIST", config={}, visible_to="OWNER",
         )
-        widget_id = create.json()["id"]
 
         manager_headers = await _manager_headers(client, manager_password)
         resp = await client.get(f"/dashboard/widgets/{widget_id}/data", headers=manager_headers)
@@ -280,24 +218,19 @@ class TestVisibilityDoubleGate:
 
 class TestEvaluation:
     async def test_metric_evaluates_current_vs_last_month(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        company: uuid.UUID, session: AsyncSession,
     ) -> None:
         headers = await _owner_headers(client, owner_password)
         page = await _create_page(client, headers, "Metric Eval Page")
         await _rec(client, headers, page, date="2026-09-05", amt="100.00", cat="Rent")
         await _rec(client, headers, page, date="2026-09-10", amt="50.00", cat="Repair")
 
-        create = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Total",
-                "widget_type": "METRIC",
-                "page_key": page["key"],
-                "config": {"metric": "sum", "column": "amount", "period": "current_month"},
-            },
-            headers=headers,
+        widget_id = await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="Total", widget_type="METRIC",
+            config={"metric": "sum", "column": "amount", "period": "current_month"},
         )
-        widget_id = create.json()["id"]
 
         resp = await client.get(f"/dashboard/widgets/{widget_id}/data", headers=headers)
         assert resp.status_code == 200, resp.text
@@ -306,24 +239,19 @@ class TestEvaluation:
         assert "comparison_value" in body
 
     async def test_trend_returns_a_daily_series(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        company: uuid.UUID, session: AsyncSession,
     ) -> None:
         headers = await _owner_headers(client, owner_password)
         page = await _create_page(client, headers, "Trend Eval Page")
         await _rec(client, headers, page, date="2026-09-05", amt="10.00", cat="Rent")
         await _rec(client, headers, page, date="2026-09-06", amt="20.00", cat="Rent")
 
-        create = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Daily total",
-                "widget_type": "TREND",
-                "page_key": page["key"],
-                "config": {"column": "amount", "metric": "sum", "bucket": "day", "days": 30},
-            },
-            headers=headers,
+        widget_id = await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="Daily total", widget_type="TREND",
+            config={"column": "amount", "metric": "sum", "bucket": "day", "days": 30},
         )
-        widget_id = create.json()["id"]
 
         resp = await client.get(f"/dashboard/widgets/{widget_id}/data", headers=headers)
         assert resp.status_code == 200, resp.text
@@ -332,7 +260,8 @@ class TestEvaluation:
         assert {Decimal(p["value"]) for p in series} == {Decimal("10.00"), Decimal("20.00")}
 
     async def test_breakdown_returns_groups(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        company: uuid.UUID, session: AsyncSession,
     ) -> None:
         headers = await _owner_headers(client, owner_password)
         page = await _create_page(client, headers, "Breakdown Eval Page")
@@ -340,17 +269,11 @@ class TestEvaluation:
         await _rec(client, headers, page, date="2026-09-06", amt="20.00", cat="Repair")
         await _rec(client, headers, page, date="2026-09-07", amt="30.00", cat="Rent")
 
-        create = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "By category",
-                "widget_type": "BREAKDOWN",
-                "page_key": page["key"],
-                "config": {"group_by": "category", "metric": "sum", "column": "amount", "top_n": 5},
-            },
-            headers=headers,
+        widget_id = await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="By category", widget_type="BREAKDOWN",
+            config={"group_by": "category", "metric": "sum", "column": "amount", "top_n": 5},
         )
-        widget_id = create.json()["id"]
 
         resp = await client.get(f"/dashboard/widgets/{widget_id}/data", headers=headers)
         assert resp.status_code == 200, resp.text
@@ -359,24 +282,19 @@ class TestEvaluation:
         assert groups["Repair"] == "20.00"
 
     async def test_list_reuses_query_filters(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        company: uuid.UUID, session: AsyncSession,
     ) -> None:
         headers = await _owner_headers(client, owner_password)
         page = await _create_page(client, headers, "List Eval Page")
         await _rec(client, headers, page, date="2026-09-05", amt="10.00", cat="Rent")
         await _rec(client, headers, page, date="2026-09-06", amt="20.00", cat="Repair")
 
-        create = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Rent only",
-                "widget_type": "LIST",
-                "page_key": page["key"],
-                "config": {"filters": [{"column": "category", "op": "eq", "value": "Rent"}]},
-            },
-            headers=headers,
+        widget_id = await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="Rent only", widget_type="LIST",
+            config={"filters": [{"column": "category", "op": "eq", "value": "Rent"}]},
         )
-        widget_id = create.json()["id"]
 
         resp = await client.get(f"/dashboard/widgets/{widget_id}/data", headers=headers)
         assert resp.status_code == 200, resp.text
@@ -385,63 +303,29 @@ class TestEvaluation:
         assert records[0]["data"]["category"] == "Rent"
 
     async def test_review_queue_filters_needs_review_true(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        company: uuid.UUID, session: AsyncSession,
     ) -> None:
         headers = await _owner_headers(client, owner_password)
         page = await _create_page(client, headers, "Review Queue Eval Page")
-        await client.post(
-            f"/pages/{page['id']}/validations",
-            json={
-                "name": "Large amount",
-                "expression": "amount <= 15",
-                "severity": "WARNING",
-                "message": "Amount is unusually large.",
-            },
-            headers=headers,
-        )
         flagged = await _rec(client, headers, page, date="2026-09-05", amt="500.00", cat="Rent")
         await _rec(client, headers, page, date="2026-09-06", amt="5.00", cat="Rent")
 
-        create = await client.post(
-            "/dashboard/widgets",
-            json={
-                "title": "Needs review",
-                "widget_type": "REVIEW_QUEUE",
-                "page_key": page["key"],
-                "config": {},
-            },
-            headers=headers,
+        # Validation rules (the feature that used to set this) are gone —
+        # flag the record directly, the same platform field either way.
+        await session.execute(
+            text("UPDATE records SET needs_review = true WHERE id = :id"),
+            {"id": flagged["id"]},
         )
-        widget_id = create.json()["id"]
+        await session.commit()
+
+        widget_id = await _insert_widget(
+            session, company_id=company, page_id=page["id"], created_by=owner,
+            title="Needs review", widget_type="REVIEW_QUEUE", config={},
+        )
 
         resp = await client.get(f"/dashboard/widgets/{widget_id}/data", headers=headers)
         assert resp.status_code == 200, resp.text
         records = resp.json()["records"]
         assert len(records) == 1
         assert records[0]["id"] == flagged["id"]
-
-
-class TestStarterSuggestions:
-    async def test_suggestions_cover_the_system_pages_when_no_widgets_exist(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, system_pages: None
-    ) -> None:
-        headers = await _owner_headers(client, owner_password)
-        resp = await client.get("/dashboard/suggestions", headers=headers)
-        assert resp.status_code == 200, resp.text
-        page_keys = {s["page_key"] for s in resp.json()}
-        assert {"expenses", "daily_revenue", "cheques"}.issubset(page_keys)
-
-    async def test_no_suggestions_once_a_widget_already_exists(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, system_pages: None
-    ) -> None:
-        headers = await _owner_headers(client, owner_password)
-        page = await _create_page(client, headers, "Suggestion Blocker Page")
-        await client.post(
-            "/dashboard/widgets",
-            json={"title": "Blocker", "widget_type": "LIST", "page_key": page["key"], "config": {}},
-            headers=headers,
-        )
-
-        resp = await client.get("/dashboard/suggestions", headers=headers)
-        assert resp.status_code == 200, resp.text
-        assert resp.json() == []

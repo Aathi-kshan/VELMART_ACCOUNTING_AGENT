@@ -41,28 +41,6 @@ class DashboardRepository {
     return response.data!.cast<Map<String, dynamic>>().map(DashboardWidget.fromJson).toList();
   });
 
-  Future<DashboardWidget> createWidget({
-    required String title,
-    required WidgetType widgetType,
-    required String pageKey,
-    Map<String, dynamic> config = const {},
-    int position = 0,
-    String? visibleTo,
-  }) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>(
-      '/dashboard/widgets',
-      data: {
-        'title': title,
-        'widget_type': widgetType.wire,
-        'page_key': pageKey,
-        'config': config,
-        'position': position,
-        if (visibleTo != null) 'visible_to': visibleTo,
-      },
-    );
-    return DashboardWidget.fromJson(response.data!);
-  });
-
   Future<DashboardWidget> updateWidget(
     String widgetId, {
     String? title,
@@ -90,10 +68,5 @@ class DashboardRepository {
   Future<WidgetEvaluation> getWidgetData(String widgetId) => mapApiErrors(() async {
     final response = await dio.get<Map<String, dynamic>>('/dashboard/widgets/$widgetId/data');
     return WidgetEvaluation.fromJson(response.data!);
-  });
-
-  Future<List<WidgetSuggestion>> getSuggestions() => mapApiErrors(() async {
-    final response = await dio.get<List<dynamic>>('/dashboard/suggestions');
-    return response.data!.cast<Map<String, dynamic>>().map(WidgetSuggestion.fromJson).toList();
   });
 }

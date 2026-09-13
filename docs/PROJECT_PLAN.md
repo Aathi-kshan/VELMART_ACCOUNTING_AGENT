@@ -26,7 +26,7 @@
 | 10 | The page engine — the core product |
 | 11 | Formulas, references, validation, and protected fields |
 | 12 | What the Owner actually builds (worked examples) |
-| 13 | CSV import / export |
+| 13 | CSV export |
 | 14 | Attachments |
 | 15 | Dashboard |
 | 16 | AI layer architecture |
@@ -98,7 +98,7 @@ Velmart Platform
 │   └── Attachments
 │
 ├── Filtering · Sorting · Searching
-├── CSV import / export
+├── CSV export
 ├── Audit log
 ├── Offline record creation
 ├── Configurable dashboard
@@ -182,9 +182,9 @@ flowchart TB
         A4["Filtering · sorting · searching"]
         A5["Formula columns (server-side, safe parser)"]
         A6["Reference columns between Owner pages"]
-        A7["Validation rules + protected status columns"]
+        A7["Protected status columns"]
         A8["Attachments"]
-        A9["CSV import + export (Owner)"]
+        A9["CSV export (Owner)"]
         A10["Configurable dashboard"]
         A11["Audit log"]
         A12["Offline record creation"]
@@ -268,10 +268,9 @@ This table is the specification. `✅` allowed · `🟡` conditional · `❌` de
 | Delete attachment | ✅ | ❌ |
 | **Create page** | ✅ | **❌** |
 | **Create / edit / reorder / delete columns** | ✅ | **❌** |
-| Define formulas and validation rules | ✅ | ❌ |
+| Define formulas | ✅ | ❌ |
 | Archive page | ✅ | ❌ |
 | Configure the dashboard | ✅ | ❌ |
-| **CSV import** | ✅ | **❌** |
 | **CSV export** | ✅ | **❌** |
 | **AI chat / questions** | ✅ | **❌** |
 | **AI propose updates** | ✅ | **❌** |
@@ -410,7 +409,7 @@ At three users, rate limiting and idempotency live in Postgres. They move to Red
 | Object storage | Railway Bucket (S3-compatible) | — | $0.015/GB-month, free bucket egress |
 | Auth | FastAPI-issued JWT · Argon2id · rotating refresh tokens | — | No third-party identity provider |
 | AI gateway | OpenRouter | — | Model-portable, one bill |
-| Background work | FastAPI `BackgroundTasks` + Railway cron | — | CSV import, exports, nightly jobs |
+| Background work | FastAPI `BackgroundTasks` + Railway cron | — | exports, nightly jobs |
 | Packaging | Docker, multi-stage, non-root | — | |
 | Python packaging | uv | latest | Lockfile, reproducible builds |
 | CI/CD | GitHub Actions → Railway | — | |
@@ -450,7 +449,7 @@ flowchart TB
         P3["stores"]
         P4["pages · page_columns"]
         P5["records (data JSONB)"]
-        P6["attachments · import_batches"]
+        P6["attachments"]
         P7["audit_logs"]
         P8["ai_sessions · ai_messages · ai_proposals"]
         P9["dashboard_widgets"]
@@ -534,7 +533,6 @@ erDiagram
 
     PAGES ||--o{ PAGE_COLUMNS : "schema defined by owner"
     PAGES ||--o{ RECORDS : "business data (owner pages)"
-    PAGES ||--o{ PAGE_VALIDATIONS : "cross-column rules"
 
     PAGES ||--o| EXPENSES : "system page describes"
     PAGES ||--o| SALARIES : "system page describes"
@@ -548,7 +546,6 @@ erDiagram
     RECORDS ||--o{ RECORDS : "references (RECORD_REF)"
 
     PAGES ||--o{ DASHBOARD_WIDGETS : "feeds"
-    PAGES ||--o{ IMPORT_BATCHES : "imported into"
 
     USERS ||--o{ AI_SESSIONS : opens
     AI_SESSIONS ||--o{ AI_MESSAGES : contains
@@ -721,16 +718,9 @@ CREATE TABLE page_columns (
     UNIQUE (page_id, key)
 );
 
-CREATE TABLE page_validations (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    page_id     UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,      -- "Revenue must balance"
-    expression  TEXT NOT NULL,      -- "abs(total - (cash + card + other - returns)) <= 100"
-    severity    TEXT NOT NULL DEFAULT 'ERROR',   -- ERROR blocks the save; WARNING flags it
-    message     TEXT NOT NULL,      -- shown to the person entering the record
-    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- page_validations (Owner-authored cross-column ERROR/WARNING rules) was
+-- removed entirely by product decision — the table, its service, endpoints,
+-- and client editor are all gone. See §11.3.
 
 CREATE TABLE page_access (
     page_id    UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -750,12 +740,11 @@ CREATE TABLE records (
     data            JSONB NOT NULL DEFAULT '{}'::jsonb,   -- ★ all Owner-defined values
     status          record_status NOT NULL DEFAULT 'ACTIVE',
     reverses_id     UUID REFERENCES records(id),
-    needs_review    BOOLEAN NOT NULL DEFAULT FALSE,       -- set by a WARNING validation
+    needs_review    BOOLEAN NOT NULL DEFAULT FALSE,       -- review-queue / REVIEW_QUEUE widget flag
     created_by      UUID NOT NULL REFERENCES users(id),
     updated_by      UUID REFERENCES users(id),
     source          TEXT NOT NULL DEFAULT 'APP',          -- APP | CSV | AI
     client_uuid     UUID,                                 -- offline idempotency
-    import_batch_id UUID,
     version         INTEGER NOT NULL DEFAULT 1,
     is_deleted      BOOLEAN NOT NULL DEFAULT FALSE,
     deleted_reason  TEXT,
@@ -798,20 +787,9 @@ CREATE TABLE attachments (
 );
 CREATE INDEX ix_attachments_record ON attachments (record_id);
 
-CREATE TABLE import_batches (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id    UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    page_id       UUID NOT NULL REFERENCES pages(id),
-    file_name     TEXT NOT NULL,
-    mapping       JSONB NOT NULL,               -- CSV header → page column key
-    total_rows    INTEGER NOT NULL,
-    imported_rows INTEGER NOT NULL DEFAULT 0,
-    skipped_rows  INTEGER NOT NULL DEFAULT 0,
-    status        TEXT NOT NULL DEFAULT 'PENDING', -- PENDING|RUNNING|DONE|FAILED|ROLLED_BACK
-    error_report  JSONB,
-    created_by    UUID NOT NULL REFERENCES users(id),
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- import_batches (CSV import bookkeeping/rollback) was removed entirely
+-- alongside the CSV import feature by product decision — CSV export is
+-- unaffected and keeps no batch table of its own. See §13.
 
 CREATE TABLE dashboard_widgets (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -987,7 +965,6 @@ both storage backends uniformly:
     updated_by      UUID REFERENCES users(id),
     source          TEXT NOT NULL DEFAULT 'APP',
     client_uuid     UUID,                       -- offline idempotency
-    import_batch_id UUID,
     version         INTEGER NOT NULL DEFAULT 1, -- optimistic locking
     is_deleted      BOOLEAN NOT NULL DEFAULT FALSE,
     deleted_reason  TEXT,
@@ -1237,20 +1214,12 @@ The platform validates that the referenced record exists, belongs to the same co
 
 Cross-page rollups ("total payments for this supplier") are a **V2** feature; in V1 the same answer comes from a filter, a dashboard widget, or a question to the AI.
 
-### 11.3 Validation rules
+### 11.3 Validation rules — removed
 
-`page_validations` lets the Owner express cross-column rules in the same expression language:
-
-| Example rule | Severity | Effect |
-|---|---|---|
-| `abs(total - (cash + card + other - returns)) <= 100` | ERROR | Save is rejected with the Owner's own message |
-| `amount <= 100000` | WARNING | Saved, `needs_review = true`, appears in the review queue |
-| `due_date >= invoice_date` | ERROR | Rejected |
-| `paid_amount <= invoice_amount` | ERROR | Rejected |
-
-This is how the revenue-variance check from earlier drafts survives without hard-coding a revenue table: **the Owner declares the rule on their own page, in their own column names.** If they never build a revenue table, no code is wasted.
-
-`WARNING` records surface in a dashboard review queue and are visible to the AI, which can be asked "what needs my attention this week".
+`page_validations` (Owner-authored cross-column ERROR/WARNING rules) was removed entirely by
+product decision, including its table, service, endpoints, and client editor. `needs_review` is
+still a real, independent platform field — the review queue and the `REVIEW_QUEUE` dashboard widget
+type both still filter on it — it just has no remaining code path that ever sets it back to `true`.
 
 ### 11.4 Protected columns
 
@@ -1443,40 +1412,10 @@ of the six (409 `RESERVED_PAGE_KEY`), because a shipped table already owns them.
 a different expense structure builds it under a different name — "Vehicle Expenses", "Petty Cash" —
 and the two coexist.
 
-## 13. CSV import / export
+## 13. CSV export
 
-**Owner only.** One generic pipeline for every page — there are no per-module importers.
-
-### 13.1 Import
-
-```mermaid
-flowchart TB
-    A["Owner uploads a CSV ≤ 10 MB"] --> B["Detect encoding and delimiter"]
-    B --> C["Parse the header, read every row"]
-    C --> D["Owner picks the target page"]
-    D --> E["Auto-map CSV headers to page columns by fuzzy name match"]
-    E --> F["Owner reviews and adjusts the mapping"]
-    F --> G["Validate every row against the page schema<br/>types, required, SELECT options, references, validation rules"]
-    G --> H{"Errors?"}
-    H -->|yes| I["Per-row error list + downloadable error CSV"]
-    I --> F
-    H -->|"no, or Owner accepts partial"| J["Preview: N valid, M skipped"]
-    J --> K["Confirm → chunked insert, 500 rows per transaction"]
-    K --> L["import_batches row + audit entry"]
-    L --> M["✅ Result, rollback available for 24 hours"]
-```
-
-Rules:
-
-- Validation covers **every** row before anything is written. A partial import that fails at row 4,000 is worse than no import.
-- Protected columns are **ignored on import** unless the importer is an Owner, which they always are — but the values are still validated against the option list and audited.
-- Every imported record carries `import_batch_id`, so the whole batch rolls back with one action for 24 hours.
-- Duplicate detection uses a natural key the Owner nominates (for example Date + Cheque Number), with skip / update / create-anyway.
-- Money strings are normalised: strip `Rs.`, strip thousands separators, treat `(1,234.00)` as negative.
-- Ambiguous dates prompt the Owner to confirm the format. Never guess.
-- `RECORD_REF` columns match on the target page's display column and report unmatched values as errors rather than creating stubs.
-
-### 13.2 Export
+**Owner only.** CSV *import* was a separate feature and has been removed entirely, including its
+table (`import_batches`), service, endpoints, and client wizard — this section covers export only.
 
 The Owner picks a page, applies filters, and exports. Files are written to the bucket and returned as a presigned URL valid for 15 minutes. CSV is UTF-8 with a BOM so Excel opens it correctly. Formula columns are exported as computed values.
 
@@ -1523,17 +1462,11 @@ Uploading through FastAPI would push every receipt photo through the API contain
 
 ### 15.1 Configurable, not fixed
 
-There are no built-in financial widgets, because there are no built-in financial tables. The dashboard is assembled by the Owner from their own pages.
-
-```mermaid
-flowchart LR
-    O["Owner"] --> W["Add widget"]
-    W --> P["Pick a page"]
-    P --> C["Pick a column + aggregation"]
-    C --> F["Add filters and a period"]
-    F --> T["Pick a widget type"]
-    T --> D["Widget appears on the dashboard"]
-```
+There are no built-in financial widgets, because there are no built-in financial tables. Widget
+*creation* has been removed by product decision (there is no `POST /dashboard/widgets`, no "Add
+widget" flow, no starter-widget suggestions) — an Owner can still view, edit, or remove a widget
+that already exists in the database, and every viewer sees whatever widgets exist, gated the same
+way as before.
 
 ### 15.2 Widget types
 
@@ -1543,11 +1476,9 @@ flowchart LR
 | `TREND` | A line or bar series over time | Total Revenue by day, last 30 days |
 | `BREAKDOWN` | Group-by with a top-N list or pie | Expenses by Category, current month |
 | `LIST` | Filtered recent or upcoming records | Cheques where Status = PENDING, sorted by Cheque Date |
-| `REVIEW_QUEUE` | Records flagged `needs_review` by WARNING rules | Anything above Rs. 100,000 this week |
+| `REVIEW_QUEUE` | Records flagged `needs_review` | Anything a manager or the AI has flagged for a second look |
 
 ### 15.3 Defaults and roles
-
-A brand-new company already has the six shipped tables, so the platform can offer meaningful starter widgets on day one — this month's expenses, revenue by day, pending cheques, today's reconciliation difference — which the Owner accepts, edits, or ignores. As further pages are created, the platform **offers** more starter widgets inferred from the schema — a total for each indexed currency column, a recent-records list per page — which the Owner accepts, edits, or ignores. Inference is a suggestion, never a hard-coded assumption.
 
 Managers see widgets whose source page they have access to, and only those marked visible to their role. The AI can also be asked for a summary at any time, which is often better than a widget for a one-off question.
 
@@ -1656,7 +1587,7 @@ If the model computes the new value, a hallucinated `Rs. 550,000` instead of `Rs
    `{tool: "propose_update", page_key: "staff", filter: {employee: "Kasun", month: "2026-09"}, changes: {basic_salary: "55000.00"}}`
 2. The **server** resolves the filter to exactly one record, or returns a disambiguation list. It never picks between two Kasuns.
 3. The **server** reads the current record and computes `before_data` / `after_data`.
-4. The **server** validates the change against the page schema, column types, SELECT options, references, and the Owner's validation rules — the same checks a human write faces.
+4. The **server** validates the change against the page schema, column types, SELECT options, and references — the same checks a human write faces.
 5. Formula columns are recalculated by the server so the diff shows downstream effects.
 6. Only then is a proposal persisted and rendered.
 
@@ -1755,7 +1686,7 @@ If a tool's JSON schema contains `company_id`, `user_id`, or `role`, that is a b
 | Tool | Returns |
 |---|---|
 | `list_pages()` | Every page: key, name, Owner's description, record count, date range |
-| `get_page_schema(page_key)` | Columns with keys, types, options, protected flag, descriptions, formulas, validation rules |
+| `get_page_schema(page_key)` | Columns with keys, types, options, protected flag, descriptions, formulas |
 | `get_column_values(page_key, column_key)` | Distinct values (for SELECT options or observed text values), so the AI can confirm "Electricity" exists before filtering on it |
 
 **Read and analysis**
@@ -1774,7 +1705,7 @@ If a tool's JSON schema contains `company_id`, `user_id`, or `role`, that is a b
 
 | Tool | Notes |
 |---|---|
-| `propose_create(page_key, values)` | Server validates against the page schema and validation rules before proposing |
+| `propose_create(page_key, values)` | Server validates against the page schema before proposing |
 | `propose_update(page_key, filter, changes)` | Must resolve to exactly one record, or the AI asks |
 | `propose_status_change(page_key, record_id, column_key, to_value)` | For protected SELECT columns; validated against the option list |
 | `propose_delete(page_key, record_id, reason)` | **Optional**, off by default (`company_settings.ai_allow_delete_proposals`). Soft delete only, reason required |
@@ -1854,10 +1785,7 @@ row_hash = sha256(prev_hash || company_id || actor_user_id || action ||
 | **Protected column value change** | ✅ page, record, column, old value, new value, actor, timestamp |
 | **Page created / renamed / archived** | ✅ full schema snapshot |
 | **Column created / edited / reordered / archived** | ✅ old and new definition |
-| Validation rule added / changed | ✅ |
 | Page access granted / revoked | ✅ |
-| CSV import | ✅ batch id, page, row counts, mapping |
-| CSV import rollback | ✅ |
 | CSV export | ✅ page, row count, filters |
 | User created / edited / deactivated / role changed | ✅ |
 | Login success, login failure, lockout | ✅ |
@@ -1905,7 +1833,7 @@ Filterable by user, page, entity, date, and source. Exportable by the Owner. Ret
 | Change a protected column value | ❌ | Owner action needing server truth |
 | Create or change pages and columns | ❌ | Schema changes need server validation |
 | AI | ❌ | Needs the server and the model |
-| CSV import / export | ❌ | Server-side |
+| CSV export | ❌ | Server-side |
 
 ### 19.2 Outbox mechanism
 
@@ -1950,7 +1878,7 @@ sequenceDiagram
 | Threat | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Manager's phone lost or stolen | High | Medium | 15-minute access token, device-bound refresh, remote revoke, encrypted local cache, biometric app lock |
-| Manager tries to hide a shortfall | Medium | High | Managers cannot edit, delete, or set protected values; full audit log; validation rules |
+| Manager tries to hide a shortfall | Medium | High | Managers cannot edit, delete, or set protected values; full audit log |
 | Manager reads a page they shouldn't (e.g. Staff salaries) | Medium | High | `page_access` grants, default-deny on new pages, enforced in the service layer and reflected in every list response |
 | Cross-tenant or cross-store leak from a query bug | Medium | Critical | `SecurityContext` at the repository layer, RLS as a second wall, automated isolation tests |
 | Prompt injection through record text | Medium | High | No write tools; human approval; data/instruction separation; scoped tools |
@@ -2165,7 +2093,7 @@ apps/api/
 │   │   ├── company.py  user.py  store.py
 │   │   ├── page.py  page_column.py  page_validation.py  page_access.py
 │   │   ├── record.py                    # storage for Owner-created pages
-│   │   ├── attachment.py  import_batch.py  dashboard_widget.py
+│   │   ├── attachment.py  dashboard_widget.py
 │   │   ├── audit.py  ai.py
 │   │   └── business/                    # ★ the six core tables
 │   │       ├── employee_salary.py  purchases.py  expenses.py
@@ -2189,7 +2117,6 @@ apps/api/
 │   │   ├── page_service.py              # create/edit pages, columns, projections
 │   │   ├── schema_service.py            # schema evolution, dry-run type narrowing
 │   │   ├── record_service.py            # ★ the main business write path
-│   │   ├── validation_service.py        # page_validations evaluation
 │   │   ├── formula_service.py           # formula columns on read + aggregate
 │   │   ├── reference_service.py         # RECORD_REF resolution and integrity
 │   │   ├── protected_field_service.py   # owner-only protected value changes
@@ -2260,14 +2187,12 @@ apps/api/
     ├── test_tenancy_isolation.py            # ★
     ├── test_page_engine.py                  # create page, add columns, evolve schema
     ├── test_record_validation.py            # types, required, options, references
-    ├── test_page_validations.py             # ERROR blocks, WARNING flags
     ├── test_formula_engine.py               # correctness, cycles, no eval, Decimal
     ├── test_query_filters.py                # filter/sort/search/aggregate, no SQL injection
     ├── test_money_precision.py
     ├── test_business_dates.py
     ├── test_optimistic_locking.py
     ├── test_offline_sync_idempotency.py
-    ├── test_csv_import.py                   # generic, against a fixture page
     ├── test_audit_logging.py
     ├── test_audit_chain.py
     └── ai/
@@ -2569,8 +2494,6 @@ async def test_endpoint_permissions(client, role, method, path, expected):
 - Formula results match hand-computed `Decimal` values across every function
 - Cyclic formulas are rejected at save time
 - The parser rejects attribute access, imports, calls to non-whitelisted names, comprehensions, and lambdas
-- `ERROR` validation rules block a save; `WARNING` rules save and set `needs_review`
-- A revenue-style balance rule behaves correctly at, just under, and just over the tolerance
 
 **AI workflow**
 
@@ -2595,7 +2518,6 @@ async def test_endpoint_permissions(client, role, method, path, expected):
 - Offline sync: replaying the same `client_uuid` creates exactly one record
 - Audit logging: every mutating endpoint produces exactly one entry with correct old/new values
 - Audit chain: tampering with a row is detected by the verifier
-- CSV import: validation catches every bad row before writing; rollback removes exactly the batch
 
 **AI evaluation** — per §16.10: simple, multi-page, ambiguous, out-of-scope, and adversarial questions, across two differently-structured fixture companies. Numerical correctness outranks answering.
 
@@ -2693,8 +2615,8 @@ gantt
 | **P2 — Roles and permissions** | 2 weeks | `companies`, `users`, `stores`, `user_stores`, user management, `permissions.py` matrix, `require_owner` guards, RLS policies, permission matrix suite, audit skeleton | The permission matrix suite is green and a manager token gets 403 on every owner-only endpoint |
 | **P3 — Page / table engine** | 4 weeks | `pages`, `page_columns`, `records`, all 15 column types, runtime Pydantic validation, projection columns, page builder UI, column editor, dynamic forms, dynamic data table, filtering, sorting, searching, `page_access` grants | A non-technical Owner builds a five-column table on a laptop and a manager enters a record on a phone, with no developer involved |
 | **P3.5 — Core business tables** | 3 weeks | Migration `0008` (the six tables, their CHECK constraints, the generated `total_revenue` / `total_amount`, and the `daily_reconciliation` view), models, system-page registration and seeding, reserved-key enforcement, storage dispatch in the repository layer so filters/sort/aggregate/search/CSV work identically over both backends, plus the reconciliation endpoint and screen | All six pages are present on first login, a manager enters a purchase and a cheque, the reconciliation view shows a correct difference for a date where revenue and ledger disagree, and `POST /pages {name:"Cheque"}` returns 409 |
-| **P4 — Business data and financial workflows** | 4 weeks | Page engine hardening at volume · formula engine (safe parser, `Decimal`) · `RECORD_REF` references and integrity · aggregation and financial calculation over Owner-created tables · `page_validations` (ERROR/WARNING) · protected columns and the owner-only change endpoint · ledger-style pages and reversal records · review queue | The Owner builds Expenses, Staff with a Net Salary formula, and Cheques with a protected status, and every calculation matches a hand-worked month |
-| **P5 — Dashboard, CSV, attachments, audit** | 2 weeks | Configurable dashboard widgets with inferred suggestions, generic CSV import with mapping and rollback, CSV export, presigned attachments, hash-chained audit log and its owner-facing view | The Owner configures four widgets from their own tables, exports a filtered month, and every mutation appears in the audit log |
+| **P4 — Business data and financial workflows** | 4 weeks | Page engine hardening at volume · formula engine (safe parser, `Decimal`) · `RECORD_REF` references and integrity · aggregation and financial calculation over Owner-created tables · protected columns and the owner-only change endpoint · ledger-style pages and reversal records · review queue. (`page_validations` was later removed entirely by product decision — see §11.3.) | The Owner builds Expenses, Staff with a Net Salary formula, and Cheques with a protected status, and every calculation matches a hand-worked month |
+| **P5 — Dashboard, CSV, attachments, audit** | 2 weeks | Configurable dashboard widgets, CSV export, presigned attachments, hash-chained audit log and its owner-facing view. (Widget creation and CSV import were both later removed entirely by product decision — see §13, §15.) | The Owner views widgets from their own tables, exports a filtered month, and every mutation appears in the audit log |
 | **P6 — Offline support** | 1.5 weeks | Drift cache of records and schemas, outbox, idempotency, sync engine, pending badges, encrypted local storage | A manager creates five records in airplane mode; all five appear exactly once after reconnecting |
 | **P7 — AI read and analysis** | 3 weeks | Orchestrator, generic tool registry, discovery and read tools, `ai_reader` role, chat UI, cost tracking and cap, golden-question evals across two differently-structured fixtures | ≥ 90% on both fixture companies, zero confidently-wrong numbers |
 | **P8 — AI proposed updates** | 2 weeks | `ai_proposals` tables, propose tools, server-computed diffs with formula recalculation, proposal card, apply endpoint with version checking, injection tests | 50 supervised proposals applied with zero unintended changes |
@@ -2746,7 +2668,7 @@ Dropping Redis, the worker service, a second replica, and a staging environment 
 |---|---|:---:|:---:|---|
 | 1 | **The Owner struggles to design good tables** — the flexibility becomes a blank page | High | Critical | Guided page builder with type hints and examples, a half-day onboarding session in P9 building the first tables together, V2 templates as an optional starting point |
 | 2 | **The manager doesn't adopt it** and keeps using paper | High | Critical | Entry must be faster than paper — four taps for a record, works offline, on-site training, the Owner insists on a single source of truth |
-| 3 | Data entry quality is poor | High | High | Smart defaults, recent-value suggestions, `WARNING` validation rules the Owner writes, weekly review queue |
+| 3 | Data entry quality is poor | High | High | Smart defaults, recent-value suggestions, weekly review queue |
 | 4 | The Owner builds a structure that makes analysis hard (everything in one Notes field) | Medium | High | The page builder nudges toward typed columns; the AI can point out when a question cannot be answered because the data is unstructured |
 | 5 | AI gives a confidently wrong number and the Owner acts on it | Medium | Critical | Provenance on every figure, one tap to the underlying records, dual-fixture eval gate, refusal preferred over guessing |
 | 6 | **A fifth shipped table is added, then a sixth** — the page engine erodes into a fixed-module product | Medium | High | ADR 0006 fixes the list at four and states that a fifth domain is an Owner page, not a migration. Any PR adding a business table is rejected in review |
@@ -2768,7 +2690,7 @@ Dropping Redis, the worker service, a second replica, and a staging environment 
 - [ ] Permission matrix suite green; every manager-denial test green
 - [ ] Page access grant tests green
 - [ ] Tenancy isolation suite green
-- [ ] Formula engine, validation rules, money precision, and business-date tests green
+- [ ] Formula engine, money precision, and business-date tests green
 - [ ] Filter and sort injection tests green
 - [ ] **A non-technical Owner has built a real table unaided and entered records into it**
 - [ ] The Owner's first four or five tables built and populated with opening data
@@ -2823,7 +2745,6 @@ Dropping Redis, the worker service, a second replica, and a staging environment 
 | Record | One row in a page; values stored in `data JSONB` |
 | Projection column | A typed, indexed copy of a hot column value, for fast filtering and aggregation |
 | Protected column | A SELECT column only Owners may set or change (e.g. cheque status) |
-| Validation rule | An Owner-written expression that blocks (ERROR) or flags (WARNING) a save |
 | Ledger page | A page corrected by reversal records rather than in-place edits |
 | Register page | A page the Owner may edit in place |
 | Formula column | A column computed server-side from other columns; never stored |
@@ -2897,7 +2818,7 @@ Each shipped table is registered as a **system page**, so the page engine's API,
 | Delete records | ✅ | ❌ |
 | Create pages / modify columns | ✅ | ❌ |
 | Set or change protected column values | ✅ | ❌ |
-| CSV import / export | ✅ | ❌ |
+| CSV export | ✅ | ❌ |
 | AI (all of it) | ✅ | ❌ |
 | Users, stores, settings, dashboard config | ✅ | ❌ |
 | Audit log | ✅ full | 🟡 own actions |
@@ -2949,7 +2870,7 @@ Owner request
 
 ### V1 platform capabilities
 
-Pages · typed columns · records · dynamic forms · dynamic data tables · filtering · sorting · searching · formulas · references · validation rules · protected status columns · attachments · CSV import and export · configurable dashboard · audit logs · permissions with per-page grants · offline record creation · Owner-only AI analysis · Owner-only AI proposed updates.
+Pages · typed columns · records · dynamic forms · dynamic data tables · filtering · sorting · searching · formulas · references · protected status columns · attachments · CSV export · configurable dashboard · audit logs · permissions with per-page grants · offline record creation · Owner-only AI analysis · Owner-only AI proposed updates.
 
 ### Deferred
 

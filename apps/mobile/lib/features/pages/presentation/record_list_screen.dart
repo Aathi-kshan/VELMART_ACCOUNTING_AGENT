@@ -99,15 +99,6 @@ class _RecordListScreenState extends ConsumerState<RecordListScreen> {
       appBar: AppBar(
         title: Text(schema.page.name),
         actions: [
-          if (canImportCsv(role))
-            IconButton(
-              icon: const Icon(Icons.upload_file_outlined),
-              tooltip: 'Import CSV',
-              onPressed: () => context.pushNamed(
-                'pageImport',
-                pathParameters: {'pageId': schema.page.id},
-              ),
-            ),
           if (canExportCsv(role))
             IconButton(
               icon: _isExporting

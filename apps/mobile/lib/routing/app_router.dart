@@ -6,18 +6,14 @@ import '../features/auth/presentation/home_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/auth/presentation/more_screen.dart';
 import '../features/audit/presentation/audit_screen.dart';
-import '../features/dashboard/domain/widget.dart';
 import '../features/dashboard/presentation/reconciliation_screen.dart';
-import '../features/dashboard/presentation/widget_builder_screen.dart';
 import '../features/pages/presentation/access_editor_screen.dart';
 import '../features/pages/presentation/column_editor_screen.dart';
-import '../features/pages/presentation/csv_import_screen.dart';
 import '../features/pages/presentation/page_builder_screen.dart';
 import '../features/pages/presentation/page_list_screen.dart';
 import '../features/pages/presentation/record_detail_screen.dart';
 import '../features/pages/presentation/record_form_screen.dart';
 import '../features/pages/presentation/record_list_screen.dart';
-import '../features/pages/presentation/validation_editor_screen.dart';
 import 'app_shell.dart';
 import 'guards.dart';
 
@@ -59,12 +55,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const AuditScreen(),
       ),
       GoRoute(
-        path: '/dashboard/widgets/new',
-        name: 'widgetNew',
-        builder: (context, state) =>
-            WidgetBuilderScreen(suggestion: state.extra as WidgetSuggestion?),
-      ),
-      GoRoute(
         path: '/pages/new',
         name: 'pageNew',
         builder: (context, state) => const PageBuilderScreen(),
@@ -86,18 +76,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         name: 'pageAccess',
         builder: (context, state) =>
             AccessEditorScreen(pageId: state.pathParameters['pageId']!),
-      ),
-      GoRoute(
-        path: '/pages/:pageId/validations',
-        name: 'pageValidations',
-        builder: (context, state) =>
-            ValidationEditorScreen(pageId: state.pathParameters['pageId']!),
-      ),
-      GoRoute(
-        path: '/pages/:pageId/import',
-        name: 'pageImport',
-        builder: (context, state) =>
-            CsvImportScreen(pageId: state.pathParameters['pageId']!),
       ),
       GoRoute(
         path: '/pages/:pageId/records/new',

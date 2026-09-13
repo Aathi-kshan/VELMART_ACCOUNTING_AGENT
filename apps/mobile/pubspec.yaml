@@ -45,12 +45,6 @@ dependencies:
   # requesting storage permissions or picking a save location ourselves.
   share_plus: ^10.1.4
 
-  # CSV import (plan section 13.1, P3.5 Part 3) — lets the Owner pick a CSV
-  # off the device to upload; `withData: true` reads it straight into memory
-  # rather than leaving only a platform-specific path (mobile sandboxing
-  # makes that path unusable for a multipart upload on some platforms).
-  file_picker: ^8.1.6
-
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

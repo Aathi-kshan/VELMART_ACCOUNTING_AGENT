@@ -11,10 +11,15 @@ What's enforced here: per-column type/required/range/options validation
 blocks deleting a record anything still references), protected-field
 enforcement (plan section 11.4): a protected column is never set (by a
 non-owner) or changed (by anyone) through this generic path, only through
-the dedicated `protected_field_service.py`; `page_validations` ERROR/WARNING
-rules (P4 §6, `app/services/validation_service.py`); and `kind=LEDGER`
-immutability — such a page's records are corrected by `reverse_record`
-(P4 §8), never edited in place.
+the dedicated `protected_field_service.py`; and `kind=LEDGER` immutability
+— such a page's records are corrected by `reverse_record` (P4 §8), never
+edited in place.
+
+`page_validations` (Owner-configured ERROR/WARNING rules) was a separate
+feature layered on top of this and has been removed entirely (product
+decision) — `needs_review` is still a real platform field (consumed by the
+review-queue filter and the `REVIEW_QUEUE` dashboard widget type), it just
+has no remaining code path that ever sets it back to `True`.
 
 Like the other P3 services, nothing here commits — callers use
 `get_rls_session`.
@@ -58,7 +63,7 @@ from app.repositories.records import (
 )
 from app.schemas.dynamic import build_record_model
 from app.schemas.record import CreateRecordRequest, ReverseRecordRequest, UpdateRecordRequest
-from app.services import formula_service, page_service, reference_service, validation_service
+from app.services import formula_service, page_service, reference_service
 from app.services.audit_service import write_audit_log
 
 _REF_TYPES = {ColumnType.STORE_REF: Store, ColumnType.USER_REF: User}
@@ -137,26 +142,6 @@ def _check_protected_on_update(
         )
 
 
-async def _run_page_validations(
-    session: AsyncSession, page: Page, columns: list[PageColumn], validated: dict[str, Any]
-) -> validation_service.ValidationOutcome:
-    """Called after formula computation, before the actual write (plan
-    section 11.3, P4 §6) — so a failed `ERROR` rule can still block a save
-    that hasn't happened yet. `validated` is `record_service`'s own
-    Python-typed data (never wire format); the formula values merged in
-    alongside it are computed the same way but never stored, matching how
-    a formula is never stored on read either."""
-    formula_plan = formula_service.prepare(columns)
-    formula_values = formula_service.compute_typed_values(formula_plan, columns, validated)
-    rules = await validation_service.list_active_rules(session, page.id)
-    outcome = validation_service.evaluate(columns, rules, {**validated, **formula_values})
-    if outcome.blocking:
-        raise ValidationFailedError(
-            outcome.blocking[0], extra={"failed_rules": outcome.blocking}
-        )
-    return outcome
-
-
 async def _derive_business_date(
     session: AsyncSession,
     ctx: SecurityContext,
@@ -213,7 +198,6 @@ async def create_record(
     readonly_extra = generated_columns_for(page)
     validated = _validate_payload(columns, payload.data, readonly_extra=readonly_extra)
     await _validate_references(session, ctx, columns, validated)
-    outcome = await _run_page_validations(session, page, columns, validated)
 
     business_date = await _derive_business_date(session, ctx, page, payload.occurred_at, validated)
     store_id = _derive_store_id(page, validated, payload.store_id)
@@ -229,12 +213,9 @@ async def create_record(
         validated=validated,
         created_by=ctx.user_id,
         client_uuid=payload.client_uuid,
-        needs_review=bool(outcome.warnings),
     )
 
     new_data = dict(handle.data)
-    if outcome.warnings:
-        new_data["validation_warnings"] = outcome.warnings
     await write_audit_log(
         session,
         company_id=ctx.company_id,
@@ -336,7 +317,6 @@ async def update_record(
         merged.pop(key, None)
 
     full_validated = _validate_payload(columns, merged, readonly_extra=generated)
-    outcome = await _run_page_validations(session, page, columns, full_validated)
     business_date = await _derive_business_date(
         session, ctx, page, payload.occurred_at or handle.occurred_at, full_validated
     )
@@ -351,12 +331,9 @@ async def update_record(
         store_id=payload.store_id,
         business_date=business_date,
         updated_by=ctx.user_id,
-        needs_review=bool(outcome.warnings),
     )
 
     new_data = dict(updated.data)
-    if outcome.warnings:
-        new_data["validation_warnings"] = outcome.warnings
     await write_audit_log(
         session,
         company_id=ctx.company_id,
@@ -404,8 +381,8 @@ async def reverse_record(
     """`kind=LEDGER` pages only (docs/PROJECT_PLAN.md §4.4's state machine):
     flips the original record `ACTIVE -> REVERSED` and, if `payload.data` is
     given, creates a new `ACTIVE` record linked via `reverses_id` — through
-    `create_record`'s own pipeline (validation, references, formulas,
-    `page_validations`), not a parallel one. Scoped to Owner-created generic
+    `create_record`'s own pipeline (validation, references, formulas), not a
+    parallel one. Scoped to Owner-created generic
     pages: `BusinessTableMixin` has no `reverses_id`-equivalent column, so a
     system page can't participate — unreachable in practice since every
     system page registers as `kind=REGISTER`, but checked explicitly rather

@@ -79,8 +79,6 @@ class _PageTile extends StatelessWidget {
                 switch (action) {
                   case 'columns':
                     context.pushNamed('pageColumns', pathParameters: {'pageId': page.id});
-                  case 'validations':
-                    context.pushNamed('pageValidations', pathParameters: {'pageId': page.id});
                   case 'access':
                     context.pushNamed('pageAccess', pathParameters: {'pageId': page.id});
                 }
@@ -90,7 +88,6 @@ class _PageTile extends StatelessWidget {
                 // section 1.7) — no column editor for the six shipped tables.
                 if (!page.isSystem)
                   const PopupMenuItem(value: 'columns', child: Text('Edit columns')),
-                const PopupMenuItem(value: 'validations', child: Text('Validation rules')),
                 const PopupMenuItem(value: 'access', child: Text('Manage access')),
               ],
             )

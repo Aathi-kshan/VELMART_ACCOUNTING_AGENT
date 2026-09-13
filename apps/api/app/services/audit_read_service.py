@@ -85,23 +85,11 @@ def format_sentence(entry: AuditLog, actor_name: str | None, page_name: str | No
             sentence = f"{actor} added a '{name}' column to {page}"
         case "COLUMN_UPDATE":
             sentence = f"{actor} edited a column on {page}"
-        case "VALIDATION_CREATE":
-            name = (entry.new_data or {}).get("name", "a validation rule")
-            sentence = f"{actor} added the '{name}' validation rule to {page}"
-        case "VALIDATION_UPDATE":
-            sentence = f"{actor} edited a validation rule on {page}"
         case "CSV_EXPORT":
             count = (entry.new_data or {}).get("row_count")
             sentence = f"{actor} exported {page}"
             if count is not None:
                 sentence += f" ({count} rows)"
-        case "CSV_IMPORT":
-            imported = (entry.new_data or {}).get("imported_rows")
-            sentence = f"{actor} imported records into {page}"
-            if imported is not None:
-                sentence += f" ({imported} rows)"
-        case "CSV_IMPORT_ROLLBACK":
-            sentence = f"{actor} rolled back a CSV import on {page}"
         case "STORE_CREATE":
             name = (entry.new_data or {}).get("name", "a store")
             sentence = f"{actor} added the store '{name}'"
@@ -112,8 +100,6 @@ def format_sentence(entry: AuditLog, actor_name: str | None, page_name: str | No
             sentence = f"{actor} added the user '{name}'"
         case "USER_UPDATE":
             sentence = f"{actor} updated a user"
-        case "DASHBOARD_WIDGET_CREATE":
-            sentence = f"{actor} added a dashboard widget"
         case "DASHBOARD_WIDGET_UPDATE":
             sentence = f"{actor} edited a dashboard widget"
         case "DASHBOARD_WIDGET_DELETE":

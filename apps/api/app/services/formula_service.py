@@ -158,9 +158,7 @@ def _compute_typed(
     next — a formula referencing another formula must see its
     already-computed value, in topological order. Returns just the
     computed formula values, still Python-typed (never wire-converted) —
-    `apply_prepared` wire-converts for a read response;
-    `compute_typed_values` hands them straight to `validation_service.py`,
-    which needs real types to evaluate a rule like `total > 0`."""
+    `apply_prepared` wire-converts for a read response."""
     values: dict[str, Any] = {}
     for key in plan.order:
         column = plan.by_key[key]
@@ -178,13 +176,10 @@ def _typed_operands(
     plan: FormulaPlan, data: dict[str, Any]
 ) -> dict[str, Any] | None:
     """`data` may be wire format (a money string, ISO date text) or already
-    Python-typed — `build_record_model`'s validators accept either, so this
-    serves both `apply_prepared` (reading stored, wire-format data back) and
-    `compute_typed_values` (record_service's own write-time, already-typed
-    `validated` dict) without a second parsing path. Returns `None` if the
-    page's schema narrowed since this data was produced and it no longer
-    parses under the new types — every formula is then unknowable, not a
-    crash."""
+    Python-typed — `build_record_model`'s validators accept either. Returns
+    `None` if the page's schema narrowed since this data was produced and it
+    no longer parses under the new types — every formula is then unknowable,
+    not a crash."""
     assert plan.operand_model is not None
     raw_operands = {k: v for k, v in data.items() if k in plan.operand_model.model_fields}
     try:
@@ -217,22 +212,6 @@ def apply_prepared(
     for key, value in computed.items():
         result[key] = _to_wire(value)
     return result
-
-
-def compute_typed_values(
-    plan: FormulaPlan, columns: list[PageColumn], data: dict[str, Any]
-) -> dict[str, Any]:
-    """Write-time counterpart to `apply_prepared`, for `validation_service.py`
-    (P4 §6): `data` here is `record_service`'s own already-Python-typed
-    `validated`/merged dict, never wire format, and the return value stays
-    Python-typed too — merged straight into a `page_validations` rule's
-    operand dict, never round-tripped through wire text first."""
-    if plan.operand_model is None:
-        return {}
-    operands = _typed_operands(plan, data)
-    if operands is None:
-        return dict.fromkeys(plan.by_key, None)
-    return _compute_typed(plan, columns, operands)
 
 
 def apply_formulas(columns: list[PageColumn], data: dict[str, Any]) -> dict[str, Any]:

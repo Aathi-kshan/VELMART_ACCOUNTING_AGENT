@@ -11,7 +11,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers.dart';
 import '../../auth/domain/user.dart';
 import '../data/page_repository.dart';
-import '../domain/csv_import.dart';
 import '../domain/page.dart';
 import '../domain/store.dart';
 
@@ -42,10 +41,4 @@ final storesProvider = FutureProvider<List<Store>>((ref) {
 /// exception (see the `USER_REF` renderer).
 final usersProvider = FutureProvider<List<User>>((ref) {
   return ref.watch(pageRepositoryProvider).listUsers();
-});
-
-/// Recent CSV import batches for one page (plan section 13.1) — feeds the
-/// rollback history list in `csv_import_screen.dart`.
-final importBatchesProvider = FutureProvider.family<List<ImportBatch>, String>((ref, pageId) {
-  return ref.watch(pageRepositoryProvider).listImportBatches(pageId);
 });

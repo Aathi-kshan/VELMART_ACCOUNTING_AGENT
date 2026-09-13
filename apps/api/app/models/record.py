@@ -60,7 +60,6 @@ class Record(Base, UUIDPKMixin, TenantMixin, VersionMixin, TimestampMixin):
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default="APP")
     client_uuid: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    import_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     deleted_reason: Mapped[str | None] = mapped_column(Text)
 

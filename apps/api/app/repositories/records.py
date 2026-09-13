@@ -290,7 +290,6 @@ async def create_row(
     created_by: uuid.UUID,
     client_uuid: uuid.UUID | None,
     source: str = "APP",
-    import_batch_id: uuid.UUID | None = None,
     needs_review: bool = False,
 ) -> RecordHandle:
     if page.storage_table:
@@ -308,7 +307,6 @@ async def create_row(
             created_by=created_by,
             client_uuid=client_uuid,
             source=source,
-            import_batch_id=import_batch_id,
             needs_review=needs_review,
             **business_kwargs,
         )
@@ -328,7 +326,6 @@ async def create_row(
         created_by=created_by,
         client_uuid=client_uuid,
         source=source,
-        import_batch_id=import_batch_id,
         needs_review=needs_review,
         **_populate_projections(page, validated),
     )
@@ -421,11 +418,9 @@ async def update_row(
     high-frequency path where that simplicity costs anything real.
 
     `needs_review` defaults to `None` (left untouched) rather than `False`:
-    only `record_service.update_record` re-runs `page_validations` and so
-    is the one caller that can freshly recompute it; every other caller of
-    this function (a protected-field change, a CSV re-import dedup update)
-    doesn't touch `page_validations` at all and would otherwise silently
-    clear a WARNING flag that's still true."""
+    no caller of this function recomputes it (the feature that used to —
+    `page_validations` — has been removed), so an ordinary edit must never
+    silently clear a flag a record already carries."""
     values: dict[str, Any] = {
         "version": handle.version + 1,
         "updated_by": updated_by,
@@ -466,26 +461,3 @@ async def soft_delete_row(
     )
 
 
-async def soft_delete_by_import_batch(
-    session: AsyncSession,
-    page: Page,
-    *,
-    import_batch_id: uuid.UUID,
-    reason: str,
-    updated_by: uuid.UUID,
-) -> int:
-    """CSV import rollback (plan section 13.1): every row this batch wrote —
-    on whichever backend `page` uses — soft-deleted in one statement. Rows a
-    later edit/delete already touched are left exactly as they are: a
-    `create_anyway` duplicate or a manual correction since the import isn't
-    silently undone."""
-    model = model_for(page)
-    result = await session.execute(
-        update(model)
-        .where(
-            model.import_batch_id == import_batch_id,  # type: ignore[attr-defined]
-            model.is_deleted.is_(False),  # type: ignore[attr-defined]
-        )
-        .values(is_deleted=True, deleted_reason=reason, updated_by=updated_by)
-    )
-    return result.rowcount or 0  # type: ignore[attr-defined]

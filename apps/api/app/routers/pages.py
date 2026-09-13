@@ -21,20 +21,17 @@ from app.models.page import Page
 from app.repositories.records import generated_columns_for
 from app.schemas.column import ColumnOut
 from app.schemas.page import CreatePageRequest, PageOut, PageSchemaOut, UpdatePageRequest
-from app.schemas.validation import ValidationRuleOut
-from app.services import page_service, validation_service
+from app.services import page_service
 
 router = APIRouter(tags=["pages"])
 
 
 async def _schema_out(session: AsyncSession, page: Page) -> PageSchemaOut:
     columns = await page_service.get_page_columns(session, page.id)
-    validations = await validation_service.list_active_rules(session, page.id)
     return PageSchemaOut(
         **PageOut.model_validate(page).model_dump(),
         columns=[ColumnOut.model_validate(c) for c in columns],
         generated_columns=sorted(generated_columns_for(page)),
-        validations=[ValidationRuleOut.model_validate(v) for v in validations],
     )
 
 

@@ -125,10 +125,10 @@ class ProtectedFieldForbiddenError(AppError):
 
 
 class ExpressionSecurityError(AppError):
-    """P4 §1 — a FORMULA/`page_validations` expression was rejected by the
-    whitelist parser: a disallowed node type, an unknown function, an
-    operand that isn't a real column on this page, or a length/depth cap.
-    Raised at save time, never at read time."""
+    """P4 §1 — a FORMULA expression was rejected by the whitelist parser: a
+    disallowed node type, an unknown function, an operand that isn't a real
+    column on this page, or a length/depth cap. Raised at save time, never
+    at read time."""
 
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "EXPRESSION_REJECTED"

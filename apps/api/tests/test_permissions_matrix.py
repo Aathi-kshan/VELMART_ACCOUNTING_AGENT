@@ -214,42 +214,6 @@ async def dashboard_widget(
     return widget_id
 
 
-@pytest.fixture
-async def validation_rule(session: AsyncSession, page: uuid.UUID) -> uuid.UUID:
-    rule_id = uuid.uuid4()
-    await session.execute(
-        text(
-            "INSERT INTO page_validations (id, page_id, name, expression, severity, message) "
-            "VALUES (:id, :page_id, 'Matrix Rule', 'True', 'WARNING', 'matrix warning')"
-        ),
-        {"id": str(rule_id), "page_id": str(page)},
-    )
-    await session.commit()
-    return rule_id
-
-
-@pytest.fixture
-async def import_batch(
-    session: AsyncSession, company: uuid.UUID, page: uuid.UUID, owner: uuid.UUID
-) -> uuid.UUID:
-    batch_id = uuid.uuid4()
-    await session.execute(
-        text(
-            "INSERT INTO import_batches "
-            "(id, company_id, page_id, file_name, mapping, total_rows, status, created_by) "
-            "VALUES (:id, :company_id, :page_id, 'matrix.csv', '{}'::jsonb, 0, 'COMMITTED', :owner)"
-        ),
-        {
-            "id": str(batch_id),
-            "company_id": str(company),
-            "page_id": str(page),
-            "owner": str(owner),
-        },
-    )
-    await session.commit()
-    return batch_id
-
-
 async def _token(client: AsyncClient, email: str, password: str, *, device_id: str) -> str:
     resp = await client.post(
         "/auth/login", json={"email": email, "password": password, "device_id": device_id}
@@ -264,8 +228,6 @@ _PATH_PARAMS = {
     "{page_id}": "page_id",
     "{column_id}": "column_id",
     "{record_id}": "record_id",
-    "{batch_id}": "batch_id",
-    "{rule_id}": "rule_id",
     "{widget_id}": "widget_id",
 }
 
@@ -275,14 +237,6 @@ _PATH_PARAMS = {
 #: plain `kind=REGISTER` one every other `{record_id}` row shares.
 _PATH_PARAMS_OVERRIDE: dict[tuple[str, str], dict[str, str]] = {
     ("POST", "/records/{record_id}/reverse"): {"{record_id}": "ledger_record_id"},
-}
-
-#: These take a multipart file rather than a JSON body — handled separately
-#: in `_call` since `_BODIES` only carries JSON bodies.
-_MULTIPART_ROUTES = {
-    ("POST", "/pages/{page_id}/import/preview"),
-    ("POST", "/pages/{page_id}/import/validate"),
-    ("POST", "/pages/{page_id}/import/commit"),
 }
 
 _BODIES: dict[tuple[str, str], dict[str, object]] = {
@@ -309,13 +263,6 @@ _BODIES: dict[tuple[str, str], dict[str, object]] = {
         "version": 1,
     },
     ("POST", "/pages/{page_id}/export"): {"filters": []},
-    ("POST", "/pages/{page_id}/validations"): {
-        "name": "Matrix Validation",
-        "expression": "amount == amount",
-        "severity": "ERROR",
-        "message": "matrix validation failed",
-    },
-    ("PATCH", "/validations/{rule_id}"): {},
     ("POST", "/records/{record_id}/reverse"): {"version": 1},
     ("POST", "/dashboard/widgets"): {
         "title": "Matrix New Widget",
@@ -385,11 +332,6 @@ async def _call(
         if placeholder in path:
             path = path.replace(placeholder, str(ids[key]))
 
-    if (rule.method, rule.path) in _MULTIPART_ROUTES:
-        files = {"file": ("matrix.csv", b"a,b\n1,2\n", "text/csv")}
-        data = {} if rule.path.endswith("/preview") else {"payload": "{}"}
-        return await client.post(path, headers=headers, files=files, data=data)
-
     body = _BODIES.get((rule.method, rule.path))
     return await client.request(rule.method, path, headers=headers, json=body)
 
@@ -408,8 +350,6 @@ async def test_endpoint_permissions(
     page: uuid.UUID,
     page_column: uuid.UUID,
     page_record: uuid.UUID,
-    import_batch: uuid.UUID,
-    validation_rule: uuid.UUID,
     ledger_record: uuid.UUID,
     dashboard_widget: uuid.UUID,
 ) -> None:
@@ -426,8 +366,6 @@ async def test_endpoint_permissions(
             "page_id": page,
             "column_id": page_column,
             "record_id": page_record,
-            "batch_id": import_batch,
-            "rule_id": validation_rule,
             "ledger_record_id": ledger_record,
             "widget_id": dashboard_widget,
         },

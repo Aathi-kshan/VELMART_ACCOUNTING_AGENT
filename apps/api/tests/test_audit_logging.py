@@ -120,28 +120,6 @@ class TestSchemaAuditing:
         assert str(row.page_id) == page_id
         assert row.new_data["name"] == "Note"
 
-    async def test_validation_create_writes_audit_entry_with_page_id(
-        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
-        company: uuid.UUID, session: AsyncSession,
-    ) -> None:
-        headers = await _owner_headers(client, owner_password)
-        page_id = await _create_page(client, headers)
-        resp = await client.post(
-            f"/pages/{page_id}/validations",
-            json={
-                "name": "Sanity",
-                "expression": "amount >= 0",
-                "severity": "ERROR",
-                "message": "Amount must not be negative.",
-            },
-            headers=headers,
-        )
-        assert resp.status_code == 201, resp.text
-
-        row = await _latest_audit_row(session, company, "VALIDATION_CREATE")
-        assert str(row.page_id) == page_id
-        assert row.new_data["name"] == "Sanity"
-
     async def test_page_access_grant_writes_audit_entry_with_page_id(
         self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
         manager: uuid.UUID, company: uuid.UUID, session: AsyncSession,

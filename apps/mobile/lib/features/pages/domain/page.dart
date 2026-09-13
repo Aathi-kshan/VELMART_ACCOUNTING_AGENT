@@ -1,5 +1,4 @@
 import 'column.dart';
-import 'validation_rule.dart';
 
 /// An Owner-defined page — one table the Owner invented (plan section 10.1).
 ///
@@ -95,7 +94,6 @@ class PageSchema {
     required this.page,
     required this.columns,
     this.generatedColumns = const {},
-    this.validations = const [],
   });
 
   factory PageSchema.fromJson(Map<String, dynamic> json) {
@@ -109,16 +107,10 @@ class PageSchema {
         .cast<String>()
         .toSet();
 
-    final validations = (json['validations'] as List<dynamic>? ?? const [])
-        .cast<Map<String, dynamic>>()
-        .map(ValidationRule.fromJson)
-        .toList();
-
     return PageSchema(
       page: Page.fromJson(json),
       columns: columns,
       generatedColumns: generatedColumns,
-      validations: validations,
     );
   }
 
@@ -134,10 +126,6 @@ class PageSchema {
   /// `ColumnType` since these are ordinary `CURRENCY` columns that just
   /// happen to be server-computed on the six system pages.
   final Set<String> generatedColumns;
-
-  /// Active `page_validations` rules (P4 §6) — archived ones are already
-  /// filtered out server-side, same as `columns`.
-  final List<ValidationRule> validations;
 
   /// Columns a person can type into through the generic record form —
   /// everything except FORMULA/ATTACHMENT (see `ColumnType.isReadOnly`),

@@ -197,6 +197,7 @@ The full DDL is [PROJECT_PLAN §8](PROJECT_PLAN.md). It is implemented in
 | `0001_tenancy_and_users` | extensions, `companies`, `company_settings`, `stores`, `users`, `user_stores`, `refresh_tokens`, `idempotency_keys`, DB roles |
 | `0002_page_engine` | `pages`, `page_columns`, `page_validations`, `page_access`, `records` + indexes |
 | `0003_attachments_imports` | `attachments`, `import_batches` |
+| `0014_remove_import_and_validation_rules` | Drops `page_validations`, `import_batches`, and `import_batch_id` (on `records` + all six business tables) — both features were later removed entirely by product decision |
 | `0004_dashboard_widgets` | `dashboard_widgets` |
 | `0005_audit_trigger_hashchain` | `audit_logs` + hash-chain trigger, `REVOKE` from `app_user` |
 | `0006_rls_policies` | RLS + `tenant_isolation` on tenant tables, `store_scope` on `records` |
@@ -234,14 +235,18 @@ are plain text for the same reason.)
 | Narrow type (TEXT → NUMBER) | 🟡 | Dry run reports how many rows would fail; explicit confirmation |
 | Delete column / page | 🟡 | Archive first; hard delete later, values written to audit first |
 
-### 6.3 The four mechanisms that make it do accounting
+### 6.3 The mechanisms that make it do accounting
 
 | Mechanism | Where | Rule |
 |---|---|---|
 | **Formula columns** | `app/core/expressions/`, `formula_service` | `ast.parse` + whitelist visitor. **No `eval`/`exec`.** Evaluated in `Decimal`, on read, never stored — so it cannot drift from its inputs. Cycles rejected at save time |
 | **References** | `reference_service` | Target must exist, same company, configured page. Deleting a referenced record is blocked |
-| **Validation rules** | `page_validations`, `validation_service` | Owner-written expressions. `ERROR` blocks the save; `WARNING` saves and sets `needs_review` |
 | **Protected columns** | `protected_field_service` | Any `SELECT` column; only Owners may set or change the value; every change audited as `PROTECTED_FIELD_CHANGE` |
+
+(**Validation rules** — `page_validations`, Owner-written cross-column ERROR/WARNING expressions —
+were removed entirely by later product decision. `needs_review` is still a real platform field,
+consumed by the review queue and the `REVIEW_QUEUE` dashboard widget type; nothing sets it `true`
+any more.)
 
 Allowed in expressions: `+ - * / ( )`, comparisons, `if/else`, and
 `sum, min, max, round, abs, safe_div, days_between, today, coalesce`. Operands are column keys on the
@@ -375,7 +380,7 @@ message, task-routed models, last 10 turns verbatim with older turns summarised,
 | Queue an attachment | ✅ |
 | Edit / delete a record, change a protected value | ❌ |
 | Create or change pages and columns | ❌ |
-| AI, CSV import/export | ❌ |
+| AI, CSV export | ❌ |
 
 **Creates only.** Each queued record carries a device-generated `client_uuid` which is the
 idempotency key end to end; `ux_records_client_uuid` guarantees replay safety. The client validates

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/permissions/can.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../dashboard/application/dashboard_providers.dart';
 import '../../dashboard/domain/widget.dart';
@@ -13,9 +12,9 @@ import '../domain/user.dart';
 
 /// The Home tab (plan section 22.4): the Owner-assembled dashboard (plan
 /// section 15) — no built-in financial widgets, because there are no
-/// built-in financial tables. A brand-new company sees starter suggestions
-/// instead of an empty screen; the Owner accepts, edits, or ignores each one
-/// (plan section 15.3 — never a hard-coded assumption).
+/// built-in financial tables. Widget creation happens outside the app (or
+/// is no longer offered, per product decision); this screen only ever
+/// views, and lets an Owner remove, whatever widgets already exist.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -67,77 +66,14 @@ class HomeScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
         if (widgets.isEmpty)
-          _SuggestionsSection(role: user.role)
+          const EmptyState(
+            icon: Icons.dashboard_customize_outlined,
+            message: 'No widgets have been added to the dashboard yet.',
+          )
         else ...[
           for (final widget in widgets) _WidgetCard(widget: widget),
         ],
-        if (canConfigureDashboard(user.role)) ...[
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () => context.pushNamed('widgetNew'),
-            icon: const Icon(Icons.add),
-            label: const Text('Add widget'),
-          ),
-        ],
       ],
-    );
-  }
-}
-
-class _SuggestionsSection extends ConsumerWidget {
-  const _SuggestionsSection({required this.role});
-
-  final UserRole role;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (!canConfigureDashboard(role)) {
-      return const EmptyState(
-        icon: Icons.dashboard_customize_outlined,
-        message: 'No widgets have been added to the dashboard yet.',
-      );
-    }
-    final suggestionsAsync = ref.watch(widgetSuggestionsProvider);
-    return suggestionsAsync.when(
-      data: (suggestions) => suggestions.isEmpty
-          ? const EmptyState(
-              icon: Icons.dashboard_customize_outlined,
-              message: 'Tap "Add widget" to build your first dashboard card.',
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Suggested for you', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                for (final suggestion in suggestions) _SuggestionCard(suggestion: suggestion),
-              ],
-            ),
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, _) => const SizedBox.shrink(),
-    );
-  }
-}
-
-class _SuggestionCard extends StatelessWidget {
-  const _SuggestionCard({required this.suggestion});
-
-  final WidgetSuggestion suggestion;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: const Icon(Icons.auto_awesome_outlined),
-        title: Text(suggestion.title),
-        subtitle: Text(suggestion.widgetType.label),
-        trailing: TextButton(
-          onPressed: () => context.pushNamed(
-            'widgetNew',
-            extra: suggestion,
-          ),
-          child: const Text('Add'),
-        ),
-      ),
     );
   }
 }

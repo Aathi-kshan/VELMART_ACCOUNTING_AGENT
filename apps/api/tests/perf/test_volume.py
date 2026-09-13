@@ -113,18 +113,6 @@ async def _seed_ledger_page(
     assert create.status_code == 201, create.text
     page_id = create.json()["id"]
 
-    rule = await client.post(
-        f"/pages/{page_id}/validations",
-        json={
-            "name": "Sanity bound",
-            "expression": "amount <= 999999999",
-            "severity": "WARNING",
-            "message": "Amount is implausibly large.",
-        },
-        headers=headers,
-    )
-    assert rule.status_code == 201, rule.text
-
     page = await get_page_by_key(session, company_id, "perf_ledger")
     assert page is not None
     num_slot = page.projection_map["amount"]

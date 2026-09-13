@@ -33,31 +33,6 @@ class ReconciliationResponse(BaseModel):
     items: list[ReconciliationItem]
 
 
-#: plan section 15.2 — the five widget types. Closed list: a new kind of
-#: widget is a new value here *and* a new branch in
-#: `dashboard_service.evaluate_widget`.
-WidgetType = Literal["METRIC", "TREND", "BREAKDOWN", "LIST", "REVIEW_QUEUE"]
-
-
-class WidgetCreateRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    widget_type: WidgetType
-    #: Which page this widget reads from — every widget type needs one,
-    #: including REVIEW_QUEUE (`needs_review` is a platform field on a
-    #: specific page's records, not company-wide). Resolved to `page_id`
-    #: server-side, the same convention `date_column_key`/`store_column_key`
-    #: already use for "a client-given key, a server-stored id".
-    page_key: str
-    #: Type-specific parameters only — which page this reads is already
-    #: `page_key` above, not repeated in here. See the module docstring for
-    #: the shape per `widget_type`.
-    config: dict[str, Any] = Field(default_factory=dict)
-    position: int = 0
-    #: `None` means visible to every role — matches the DB column's own
-    #: nullable "everyone" default (migration 0004).
-    visible_to: UserRole | None = None
-
-
 class WidgetUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     config: dict[str, Any] | None = None
@@ -105,18 +80,6 @@ class WidgetEvaluationResponse(BaseModel):
     #: LIST / REVIEW_QUEUE
     records: list[RecordOut] | None = None
     records_has_more: bool | None = None
-
-
-class WidgetSuggestion(BaseModel):
-    """Never persisted until the Owner accepts it (plan section 15.3:
-    "Inference is a suggestion, never a hard-coded assumption") — accepting
-    one is just `POST /dashboard/widgets` with this same shape as the body,
-    no separate "accept" endpoint."""
-
-    title: str
-    widget_type: WidgetType
-    page_key: str
-    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class MetricConfig(BaseModel):
