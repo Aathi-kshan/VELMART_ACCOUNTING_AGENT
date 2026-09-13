@@ -70,8 +70,19 @@ def app_user_url(postgres_url: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+@pytest.fixture(scope="session")
+def ai_reader_url(postgres_url: str) -> str:
+    """The same container and database, but as `ai_reader` (migration 0001) —
+    the role every AI tool call must use (app/dependencies/db.py's
+    `get_ai_reader_session`). SELECT-only, cannot see `users`/
+    `refresh_tokens`/`idempotency_keys`, and not `BYPASSRLS`."""
+    parts = urlsplit(postgres_url)
+    netloc = f"ai_reader:CHANGE_ME@{parts.hostname}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 @pytest.fixture(scope="session", autouse=True)
-def _settings(app_user_url: str) -> Iterator[None]:
+def _settings(app_user_url: str, ai_reader_url: str) -> Iterator[None]:
     """Point the app at the container before anything imports settings.
 
     `DATABASE_URL` is the `app_user` connection, not the superuser one — see
@@ -80,6 +91,7 @@ def _settings(app_user_url: str) -> Iterator[None]:
     superuser connection directly, unaffected by this.
     """
     os.environ["DATABASE_URL"] = app_user_url
+    os.environ["DATABASE_URL_READONLY"] = ai_reader_url
     os.environ.setdefault("JWT_SECRET_KEY", "test-secret-" + "x" * 60)  # >= 64 bytes
     os.environ.setdefault("ENVIRONMENT", "development")
 
@@ -115,6 +127,22 @@ async def app_user_session(app_user_url: str) -> AsyncIterator[AsyncSession]:
     from app.config import to_asyncpg_url
 
     eng = create_async_engine(to_asyncpg_url(app_user_url), poolclass=None)
+    maker = async_sessionmaker(eng, expire_on_commit=False)
+    async with maker() as s:
+        yield s
+    await eng.dispose()
+
+
+@pytest.fixture
+async def ai_reader_session(ai_reader_url: str) -> AsyncIterator[AsyncSession]:
+    """A raw connection as `ai_reader`, with no RLS context armed — for tests
+    that check the role's own grants directly (SELECT-only, cannot see
+    `users`/`refresh_tokens`/`idempotency_keys`), as opposed to
+    `get_ai_reader_session` which additionally arms RLS from a
+    `SecurityContext`."""
+    from app.config import to_asyncpg_url
+
+    eng = create_async_engine(to_asyncpg_url(ai_reader_url), poolclass=None)
     maker = async_sessionmaker(eng, expire_on_commit=False)
     async with maker() as s:
         yield s
