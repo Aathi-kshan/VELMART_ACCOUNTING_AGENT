@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/ai_message.dart';
+import 'proposal_card.dart';
 import 'tool_activity_chip.dart';
 
 /// One chat bubble — the Owner's own message, or the assistant's answer
@@ -65,6 +66,7 @@ class MessageBubble extends StatelessWidget {
                 ],
               ),
             ],
+            if (message.proposal != null) ProposalCard(proposal: message.proposal!),
           ],
         ),
       ),
