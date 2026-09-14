@@ -40,11 +40,12 @@ _INSERT_AUDIT_LOG = text(
     """
     INSERT INTO audit_logs
         (company_id, actor_user_id, actor_role, action, entity_type,
-         entity_id, page_id, old_data, new_data, source, ip_address, user_agent, row_hash)
+         entity_id, page_id, old_data, new_data, source, ai_session_id,
+         ip_address, user_agent, row_hash)
     VALUES
         (:company_id, :actor_user_id, CAST(:actor_role AS user_role), :action,
          :entity_type, :entity_id, :page_id, CAST(:old_data AS jsonb), CAST(:new_data AS jsonb),
-         :source, CAST(:ip AS inet), :ua, '')
+         :source, :ai_session_id, CAST(:ip AS inet), :ua, '')
     """
 )
 
@@ -62,6 +63,7 @@ async def write_audit_log(
     old_data: dict[str, Any] | None = None,
     new_data: dict[str, Any] | None = None,
     source: str = "APP",
+    ai_session_id: uuid.UUID | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
 ) -> None:
@@ -76,6 +78,7 @@ async def write_audit_log(
         "old_data": json.dumps(old_data) if old_data is not None else None,
         "new_data": json.dumps(new_data) if new_data is not None else None,
         "source": source,
+        "ai_session_id": str(ai_session_id) if ai_session_id else None,
         "ip": ip_address,
         "ua": user_agent,
     }

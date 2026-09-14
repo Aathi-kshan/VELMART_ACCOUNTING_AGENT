@@ -9,7 +9,17 @@ to the model from that `params_model` alone, and raises immediately if the
 function forgot `ctx` or if the schema would leak `company_id`/`user_id`/
 `role` — the model must never see, and therefore can never spoof, any of
 these. Every later tool module (discovery_tools.py, read_tools.py,
-entity_tools.py) registers through this at import time.
+entity_tools.py, propose_tools.py) registers through this at import time.
+
+`kind` (P8) is what lets the orchestrator hand out the right database
+session per tool: a `"read"` tool always runs on the SELECT-only `ai_reader`
+session — structurally incapable of writing anything, business data or
+otherwise. A `"propose"` tool runs on the RLS-armed `app_user` session
+instead, since it has to INSERT an `AiProposal`/`AiProposalItem` row — but
+it may still never touch a business table directly; the only path that ever
+writes business data is the Owner-approved `POST /ai/proposals/{id}/apply`
+endpoint, which reuses the same service functions a human `PATCH` already
+calls (see `app/ai/proposals.py`).
 """
 
 from __future__ import annotations
@@ -17,7 +27,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -25,6 +35,8 @@ from pydantic import BaseModel
 #: Any of these leaking would let the model claim to act as a different
 #: tenant, user, or role than the one actually making the request.
 FORBIDDEN_SCHEMA_FIELDS = frozenset({"ctx", "company_id", "user_id", "role"})
+
+ToolKind = Literal["read", "propose"]
 
 
 class ToolSchemaSafetyError(RuntimeError):
@@ -39,6 +51,7 @@ class RegisteredTool:
     params_model: type[BaseModel]
     fn: Callable[..., Awaitable[Any]]
     schema: dict[str, Any]
+    kind: ToolKind = "read"
 
 
 #: name -> RegisteredTool. Populated by each tool module at import time.
@@ -73,6 +86,7 @@ def register_tool(
     name: str,
     description: str,
     params_model: type[BaseModel],
+    kind: ToolKind = "read",
 ) -> RegisteredTool:
     """Register an AI tool. Raises `ToolSchemaSafetyError` immediately if the
     tool is missing `ctx` or its schema would leak tenancy/identity fields —
@@ -83,7 +97,12 @@ def register_tool(
     _require_no_leaked_context_fields(name, schema)
 
     tool = RegisteredTool(
-        name=name, description=description, params_model=params_model, fn=fn, schema=schema
+        name=name,
+        description=description,
+        params_model=params_model,
+        fn=fn,
+        schema=schema,
+        kind=kind,
     )
     TOOL_REGISTRY[name] = tool
     return tool

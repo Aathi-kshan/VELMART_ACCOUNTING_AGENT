@@ -145,6 +145,31 @@ class TestGetTool:
             get_tool("does_not_exist")
 
 
+class TestToolKind:
+    """P8: `kind` is what lets the orchestrator hand a tool the right
+    database session — `"read"` tools get the SELECT-only `ai_reader`
+    session, `"propose"` tools get the write-capable one, since they have
+    to INSERT a proposal row."""
+
+    def test_defaults_to_read(self) -> None:
+        tool = register_tool(
+            _good_tool, name="good_tool", description="...", params_model=_GoodParams
+        )
+
+        assert tool.kind == "read"
+
+    def test_can_be_registered_as_propose(self) -> None:
+        tool = register_tool(
+            _good_tool,
+            name="good_tool",
+            description="...",
+            params_model=_GoodParams,
+            kind="propose",
+        )
+
+        assert tool.kind == "propose"
+
+
 class TestEveryRegisteredToolPassesSchemaSafety:
     """The CI gate `docs/IMPLEMENTATION_PLAN.md` names explicitly: import
     every real AI tool module so it registers itself, then assert none of

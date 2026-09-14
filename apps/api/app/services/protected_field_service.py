@@ -36,7 +36,14 @@ async def set_protected_field(
     column_key: str,
     value: str,
     version: int | None,
+    *,
+    source: str = "APP",
+    ai_session_id: uuid.UUID | None = None,
 ) -> RecordHandle:
+    """`source`/`ai_session_id` (P8): every existing caller is the human-
+    facing `PATCH /records/{id}/protected-field` route and gets the
+    untouched defaults; the proposal-apply endpoint is the only caller that
+    ever passes `source="AI"`."""
     system_pages = await page_service.list_system_pages(session, ctx.company_id)
     page = await find_record(session, ctx.company_id, record_id, system_pages)
     if page is None:
@@ -99,5 +106,7 @@ async def set_protected_field(
         actor_role=ctx.role.value,
         old_data={"column": column_key, "value": old_value},
         new_data={"column": column_key, "value": value},
+        source=source,
+        ai_session_id=ai_session_id,
     )
     return updated

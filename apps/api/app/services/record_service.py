@@ -69,7 +69,7 @@ from app.services.audit_service import write_audit_log
 _REF_TYPES = {ColumnType.STORE_REF: Store, ColumnType.USER_REF: User}
 
 
-async def _validate_references(
+async def validate_references(
     session: AsyncSession,
     ctx: SecurityContext,
     columns: list[PageColumn],
@@ -78,7 +78,11 @@ async def _validate_references(
     """`STORE_REF`/`USER_REF` point at platform tables that already exist, so
     they're checked directly here; `RECORD_REF` points at another *page's*
     row, so its existence check (and the delete-blocking it implies) lives
-    in `app/services/reference_service.py` instead."""
+    in `app/services/reference_service.py` instead.
+
+    Public (not `_`-prefixed): `app/ai/tools/propose_tools.py` (P8) reuses
+    this exact check when validating a proposed change, rather than
+    re-implementing reference validation a second time."""
     for column in columns:
         model = _REF_TYPES.get(column.data_type)
         if model is None:
@@ -173,9 +177,13 @@ def _derive_store_id(
     return explicit_store_id
 
 
-def _validate_payload(
+def validate_payload(
     columns: list[PageColumn], data: dict[str, Any], *, readonly_extra: frozenset[str] = frozenset()
 ) -> dict[str, Any]:
+    """Public (not `_`-prefixed): reused by `app/ai/tools/propose_tools.py`
+    (P8) to validate a proposal's merged `after_data` the same way a real
+    update validates its merged data — one schema-validation implementation,
+    not two."""
     model = build_record_model(columns, readonly_extra=readonly_extra)
     try:
         return model(**data).model_dump()
@@ -196,8 +204,8 @@ async def create_record(
     _check_protected_on_create(ctx, columns, payload.data)
 
     readonly_extra = generated_columns_for(page)
-    validated = _validate_payload(columns, payload.data, readonly_extra=readonly_extra)
-    await _validate_references(session, ctx, columns, validated)
+    validated = validate_payload(columns, payload.data, readonly_extra=readonly_extra)
+    await validate_references(session, ctx, columns, validated)
 
     business_date = await _derive_business_date(session, ctx, page, payload.occurred_at, validated)
     store_id = _derive_store_id(page, validated, payload.store_id)
@@ -273,6 +281,9 @@ async def update_record(
     record_id: uuid.UUID,
     payload: UpdateRecordRequest,
     version: int | None,
+    *,
+    source: str = "APP",
+    ai_session_id: uuid.UUID | None = None,
 ) -> RecordHandle:
     """Owner-only (enforced by the router's `require_owner`); every edit is
     audited with old and new values (docs/API.md §5).
@@ -280,7 +291,13 @@ async def update_record(
     Unlike `create_record`, the caller can't know `page_id` (and so its
     columns) until the record itself is fetched — a path param only carries
     `record_id` — so this looks both up internally rather than taking them
-    as parameters."""
+    as parameters.
+
+    `source`/`ai_session_id` (P8): every existing caller is the human-facing
+    `PATCH /records/{id}` route and gets the untouched defaults. The
+    proposal-apply endpoint (`app/ai/proposals.py`) is the only caller that
+    ever passes `source="AI"`, so an applied proposal's audit entry
+    correctly attributes the change to the AI session that proposed it."""
     page, columns, handle = await _locate(session, ctx, record_id)
     if page.kind is PageKind.LEDGER:
         raise LedgerRecordImmutableError(
@@ -300,7 +317,7 @@ async def update_record(
         ) from exc
 
     if changes:
-        await _validate_references(session, ctx, columns, changes)
+        await validate_references(session, ctx, columns, changes)
 
     generated = generated_columns_for(page)
     old_data = dict(handle.data)
@@ -316,7 +333,7 @@ async def update_record(
     for key in generated:
         merged.pop(key, None)
 
-    full_validated = _validate_payload(columns, merged, readonly_extra=generated)
+    full_validated = validate_payload(columns, merged, readonly_extra=generated)
     business_date = await _derive_business_date(
         session, ctx, page, payload.occurred_at or handle.occurred_at, full_validated
     )
@@ -345,6 +362,8 @@ async def update_record(
         actor_role=ctx.role.value,
         old_data=old_data,
         new_data=new_data,
+        source=source,
+        ai_session_id=ai_session_id,
     )
     updated.data = formula_service.apply_formulas(columns, updated.data)
     return updated

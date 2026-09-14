@@ -193,6 +193,28 @@ class AiBudgetExceededError(AppError):
     title = "Daily AI budget exceeded"
 
 
+class ProposalExpiredError(AppError):
+    """P8 — an `AiProposal`'s 10-minute TTL has passed; it is marked
+    `EXPIRED` and can no longer be applied. The Owner must ask the AI to
+    propose the change again from the current data."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "PROPOSAL_EXPIRED"
+    title = "Proposal expired"
+
+
+class ProposalStaleError(AppError):
+    """P8 — a proposal's `expected_version` no longer matches the target
+    record's current version: something else changed it since the proposal
+    was created. `extra` carries `{"current_version": ...}`, the same shape
+    `VersionConflictError` uses, so the client can offer the same "reload
+    and retry" recovery — here, "ask the AI to propose again"."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "PROPOSAL_STALE"
+    title = "Proposal is stale"
+
+
 def problem_response(
     *,
     status_code: int,
