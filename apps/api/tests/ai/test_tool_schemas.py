@@ -187,6 +187,7 @@ class TestEveryRegisteredToolPassesSchemaSafety:
             "app.ai.tools.discovery_tools",
             "app.ai.tools.read_tools",
             "app.ai.tools.entity_tools",
+            "app.ai.tools.propose_tools",
         ):
             importlib.reload(importlib.import_module(module_name))
 
@@ -196,3 +197,11 @@ class TestEveryRegisteredToolPassesSchemaSafety:
                 "properties", {}
             ).keys()
             assert not leaked, f"tool {tool.name!r} leaks {leaked}"
+
+    def test_propose_tools_are_registered_with_propose_kind(self) -> None:
+        import importlib
+
+        importlib.reload(importlib.import_module("app.ai.tools.propose_tools"))
+
+        assert TOOL_REGISTRY["propose_update"].kind == "propose"
+        assert TOOL_REGISTRY["propose_status_change"].kind == "propose"
