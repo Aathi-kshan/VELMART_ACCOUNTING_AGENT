@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/ai/presentation/ai_chat_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/presentation/home_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
@@ -53,6 +54,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/audit',
         name: 'audit',
         builder: (context, state) => const AuditScreen(),
+      ),
+      GoRoute(
+        path: '/ai',
+        name: 'ai',
+        builder: (context, state) => const AiChatScreen(),
       ),
       GoRoute(
         path: '/pages/new',

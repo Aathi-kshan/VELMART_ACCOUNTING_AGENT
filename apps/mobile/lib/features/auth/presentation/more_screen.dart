@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/permissions/can.dart';
 import '../application/auth_controller.dart';
 
 /// The More tab (plan section 22.4). Content only — `AppShell` owns the
@@ -46,6 +47,16 @@ class MoreScreen extends ConsumerWidget {
             onTap: () => context.pushNamed('audit'),
           ),
         ),
+        if (user != null && canUseAi(user.role)) ...[
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.chat_bubble_outline),
+              title: const Text('Ask about your business'),
+              onTap: () => context.pushNamed('ai'),
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
         Card(
           child: ListTile(
