@@ -47,3 +47,10 @@ class SendAiMessageResponse(BaseModel):
     proposal: dict[str, Any] | None = None
     cost_usd: str
     partial: bool
+
+
+class ProposalStatusResponse(BaseModel):
+    """`POST /ai/proposals/{id}/cancel` — and `.../apply` (P8 Slice 6)."""
+
+    id: uuid.UUID
+    status: str

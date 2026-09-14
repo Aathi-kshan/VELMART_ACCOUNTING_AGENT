@@ -225,6 +225,29 @@ async def ai_session_id(session: AsyncSession, company: uuid.UUID, owner: uuid.U
     return ai_session_id
 
 
+@pytest.fixture
+async def ai_proposal_id(
+    session: AsyncSession, company: uuid.UUID, owner: uuid.UUID, ai_session_id: uuid.UUID
+) -> uuid.UUID:
+    proposal_id = uuid.uuid4()
+    await session.execute(
+        text(
+            "INSERT INTO ai_proposals "
+            "(id, company_id, session_id, created_by, summary, status, expires_at) "
+            "VALUES (:id, :company_id, :session_id, :owner, 'Matrix proposal', "
+            "'PENDING', now() + interval '10 minutes')"
+        ),
+        {
+            "id": str(proposal_id),
+            "company_id": str(company),
+            "session_id": str(ai_session_id),
+            "owner": str(owner),
+        },
+    )
+    await session.commit()
+    return proposal_id
+
+
 async def _token(client: AsyncClient, email: str, password: str, *, device_id: str) -> str:
     resp = await client.post(
         "/auth/login", json={"email": email, "password": password, "device_id": device_id}
@@ -241,6 +264,7 @@ _PATH_PARAMS = {
     "{record_id}": "record_id",
     "{widget_id}": "widget_id",
     "{session_id}": "ai_session_id",
+    "{proposal_id}": "ai_proposal_id",
 }
 
 #: Per-(method, path) overrides of `_PATH_PARAMS`, for a route whose
@@ -369,6 +393,7 @@ async def test_endpoint_permissions(
     ledger_record: uuid.UUID,
     dashboard_widget: uuid.UUID,
     ai_session_id: uuid.UUID,
+    ai_proposal_id: uuid.UUID,
 ) -> None:
     expected = rule.expected_status(role)
     resp = await _call(
@@ -386,6 +411,7 @@ async def test_endpoint_permissions(
             "ledger_record_id": ledger_record,
             "widget_id": dashboard_widget,
             "ai_session_id": ai_session_id,
+            "ai_proposal_id": ai_proposal_id,
         },
     )
     if expected >= 400:
