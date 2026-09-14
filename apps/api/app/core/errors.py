@@ -174,6 +174,25 @@ class LedgerRecordImmutableError(AppError):
     title = "Ledger record is immutable"
 
 
+class AiDisabledError(AppError):
+    """P7 §16.9 — `company_settings.ai_enabled = false`, the kill switch:
+    takes effect on the very next message, no deploy, no cache to bust."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "AI_DISABLED"
+    title = "AI is disabled for this company"
+
+
+class AiBudgetExceededError(AppError):
+    """P7 §16.9 — today's AI spend for this company has reached
+    `company_settings.ai_daily_usd_cap`; no further model calls are made
+    until the cap resets at the next UTC day boundary."""
+
+    status_code = status.HTTP_402_PAYMENT_REQUIRED
+    code = "AI_BUDGET_EXCEEDED"
+    title = "Daily AI budget exceeded"
+
+
 def problem_response(
     *,
     status_code: int,
