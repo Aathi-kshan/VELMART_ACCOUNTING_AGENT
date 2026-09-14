@@ -456,7 +456,13 @@ as developer output. Exportable by the Owner; retained seven years.
 Every `/ai/*` endpoint returns **403 for a manager**, at the router, the orchestrator, and every
 tool. The denial is audited.
 
-### `POST /ai/sessions` → `POST /ai/sessions/{id}/messages`
+### `POST /ai/sessions`
+
+```json
+{ "id": "uuid", "started_at": "2026-09-10T09:30:00Z" }
+```
+
+### `POST /ai/sessions/{id}/messages`
 
 ```json
 { "message": "How much did we spend on electricity this month?" }
@@ -464,52 +470,84 @@ tool. The denial is audited.
 
 ```json
 {
+  "message_id": "uuid",
   "answer": "Rs. 587,400 — from 23 records in Expenses, 1–30 September, where Category is Electricity.",
-  "provenance": { "page": "Expenses", "record_count": 23, "from": "2026-09-01", "to": "2026-09-30" },
+  "provenance": [
+    { "page": "Expenses", "record_count": 23, "from": "2026-09-01", "to": "2026-09-30" }
+  ],
   "tool_calls": [ { "tool": "aggregate_records", "duration_ms": 34 } ],
   "proposal": null,
-  "cost_usd": "0.0042"
+  "cost_usd": "0.0042",
+  "partial": false
 }
 ```
 
-Budgets per message: 8 tool calls, 12 seconds, 2,000 rows, 25,000 tokens of tool output. Exceeding a
-budget returns a partial answer **that says so**. Blocked by `ai_enabled = false` or the daily USD
-cap (`AI_DISABLED` / `AI_BUDGET_EXCEEDED`).
+`provenance` is always a list — `search_records` can match on more than one page in a single call, so
+a figure's source is never collapsed into one entry that would hide which page(s) it actually came
+from. Budgets per message: 8 tool calls, 12 seconds, 2,000 rows, 25,000 tokens of tool output.
+Exceeding a budget returns `partial: true` with an answer that says so. Blocked by `ai_enabled =
+false` or the daily USD cap (`AI_DISABLED` / `AI_BUDGET_EXCEEDED`) before any model call is made.
 
-When the message implies a change, the response carries a `proposal` instead of, or alongside, an
-answer:
+When the message implies a change, `propose_update`/`propose_status_change` populate `proposal`
+instead of (or alongside) a plain answer — P8 Lite's propose tools are single-record, so `proposal`
+never carries more than one target page/record at a time:
 
 ```json
-{ "proposal": {
-    "id": "uuid", "status": "PENDING", "expires_at": "2026-09-10T09:41:00Z",
-    "summary": "Correct card sales on Daily Revenue for 7 September",
-    "items": [ { "operation": "UPDATE", "page": "Daily Revenue", "record_id": "uuid", "expected_version": 3,
-                 "changes": [
-                   { "column": "card_sales",    "before": "68000.00",  "after": "70000.00" },
-                   { "column": "total_revenue", "before": "248000.00", "after": "250000.00", "computed": true } ] } ] } }
+{
+  "message_id": "uuid",
+  "answer": "I've prepared an update to card sales on Daily Revenue for 7 September. Please review.",
+  "provenance": [],
+  "tool_calls": [ { "tool": "propose_update", "duration_ms": 41 } ],
+  "proposal": {
+    "id": "uuid",
+    "summary": "Update Daily Revenue",
+    "expires_at": "2026-09-10T09:41:00Z",
+    "page": "Daily Revenue",
+    "changes": [
+      { "column": "card_sales", "before": "68000.00", "after": "70000.00" },
+      { "column": "total_revenue", "before": "248000.00", "after": "250000.00" }
+    ]
+  },
+  "cost_usd": "0.0058",
+  "partial": false
+}
 ```
 
-**The diff was computed by the server from the current database values, not by the model.** Computed
-columns — formula columns on Owner pages, generated columns on shipped tables — are recalculated so
-downstream effects are visible before the Owner confirms. See
-[ADR 0004](ADR/0004-ai-proposal-flow.md).
+**`changes` was computed by the server from the current database values, not by the model** — even a
+generated/formula column's downstream effect (`total_revenue` above) is recalculated so it's visible
+before the Owner confirms, using the exact same values `POST /ai/proposals/{id}/apply` will actually
+write. Calling `propose_update`/`propose_status_change` never writes anything itself — it only
+creates a `PENDING` row in `ai_proposals`/`ai_proposal_items`. See [ADR 0004](ADR/0004-ai-proposal-flow.md).
 
 ### `POST /ai/proposals/{id}/apply`
 
 The **UPDATE button**, and the only path that mutates business data on the AI's behalf. The server
-re-validates, checks `expected_version` on every item, applies them in **one transaction**, and
-writes audit entries with `source = 'AI'` and the session id.
+re-fetches the target record, checks `expected_version`, re-validates, recalculates formulas, and
+applies in **one transaction** — writing an audit entry with `source = 'AI'` and the session id for
+both the proposal itself and the underlying record change.
+
+```json
+{ "id": "uuid", "status": "APPLIED" }
+```
 
 | Response | When |
 |---|---|
 | `200` | Applied |
-| `409 PROPOSAL_STALE` | A record changed since the proposal — re-propose |
-| `409 PROPOSAL_EXPIRED` | Past the 10-minute TTL |
-| `409` | Already applied — a proposal cannot be applied twice |
+| `404` | No such proposal, or it belongs to another company |
+| `409 PROPOSAL_STALE` | The record changed since the proposal was created — nothing is overwritten; ask the AI to propose again |
+| `409 PROPOSAL_EXPIRED` | Past the 10-minute TTL — the proposal is marked `EXPIRED` here if this is the first call to discover it |
+| `409` | Already `APPLIED`/`CANCELLED`/`EXPIRED` — a proposal cannot be applied twice |
 
 ### `POST /ai/proposals/{id}/cancel`
 
-Sets `CANCELLED`, leaves data untouched, and is audited.
+```json
+{ "id": "uuid", "status": "CANCELLED" }
+```
+
+Leaves the target record completely untouched and is audited. Cancelling an already-`CANCELLED`
+proposal is a safe no-op (still `200`); cancelling an already-`APPLIED` one is `409`. Expiry is lazy
+here too — a `PENDING` proposal discovered past its `expires_at` is marked `EXPIRED` (not
+`CANCELLED`) and this call returns `409 PROPOSAL_EXPIRED`.
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR 0004 — AI mutates data only through server-computed proposals
 
-- **Status:** Accepted
+- **Status:** Accepted; implemented as **P8 Lite** (see "P8 Lite — what was actually built" below)
 - **Date:** 2026-09-10
 - **Deciders:** Owner, lead developer
 - **Related:** [PROJECT_PLAN §16](../PROJECT_PLAN.md), §17, [ADR 0005](0005-two-roles-managers-cannot-edit.md)
@@ -40,8 +40,11 @@ Then, server-side:
 1. Resolve the filter to **exactly one** record, or return a disambiguation list. Never pick between
    two Kasuns.
 2. Read the current record and compute `before_data` / `after_data` from the database.
-3. Validate the change against the page schema, column types, SELECT options, references, and the
-   Owner's validation rules — the same checks a human write faces.
+3. Validate the change against the page schema, column types, SELECT options, and references — the
+   same checks a human write faces. (`page_validations`, the Owner-configurable ERROR/WARNING rule
+   feature this line originally also named, was removed entirely as a separate product decision
+   before P8 was built — see `app/services/record_service.py`'s own module docstring. There is no
+   longer a distinct "Owner's validation rules" layer to check here.)
 4. Recalculate formula columns so the diff shows downstream effects.
 5. Only then persist the proposal and render it.
 
@@ -86,6 +89,43 @@ the model. If a tool schema contains `company_id`, `user_id`, or `role`, **CI fa
    checkboxes and a bulk-change warning.
 5. **Detection** — tool output containing instruction-like patterns is logged and surfaced to the
    Owner as a data-hygiene note.
+
+## P8 Lite — what was actually built
+
+This project is a ~10-staff supermarket platform, not an enterprise system — P8 was scoped down
+accordingly (the user's own brief calls this "P8 Lite"). The decision itself and its guardrails
+above are unchanged; these are the concrete, deliberate simplifications in the implementation:
+
+- **Two propose tools only: `propose_update` and `propose_status_change`.** `propose_create` and
+  `propose_delete` were not built — nothing in the current product requires them, and adding them
+  would duplicate `record_service.create_record`'s/`reference_service`'s own validation surface for
+  no current use case.
+- **No `filter`-based server-side resolution.** The example in this ADR's Decision section above
+  (`filter: {employee: "Kasun", month: "2026-09"}`) describes the *problem* correctly but not the
+  *shape* actually built. In practice, a propose tool takes a `record_id` — the model must obtain it
+  from an earlier read-tool call (`search_records`/`query_records`/`search_entities`) in the same
+  conversation, and the propose tool then verifies that id against the database (real row, right
+  company, right page, not deleted) before using it. This reuses the read tools' own result lists as
+  the disambiguation mechanism (a search returning two "Kasun"s is exactly as visible to the model as
+  a dedicated resolver's disambiguation response would be) rather than building a second, parallel
+  name-matching engine inside the propose tools themselves.
+- **No `change_request` intent-router label.** The router (`app/ai/router.py`) still only classifies
+  `question`/`out_of_scope`; a change request is in-scope in that sense, and flows into the same
+  tool-calling loop where `propose_update`/`propose_status_change` are simply two more available
+  tools, governed by the system/write-agent prompts rather than a routing decision.
+- **No bulk-proposal UI.** Both propose tools are single-record, so every proposal built by this
+  code has exactly one `AiProposalItem`. The apply/cancel logic in `app/ai/proposals.py` is written
+  generically over however many items a proposal has (looping, one transaction), so a future
+  bulk-propose tool would not require touching that code — but the "over 5 records renders per-item
+  checkboxes and a bulk warning" UI named in the Blast radius section above was not built, since
+  nothing in this scope ever produces more than one item to review.
+- **Schema fix required during implementation:** `ai_proposal_items.record_id` originally carried a
+  single FK to `records(id)` (migration `0007`), which cannot be correct — a proposal must be able to
+  target either the generic `records` table or a native/system table's own row (`cheques`,
+  `expenses`, ...), exactly like `RecordHandle`/`get_row` already abstract over both storage
+  backends. Migration `0015` drops that FK; referential integrity for `record_id` is enforced in
+  `propose_tools.py` itself (`get_row` verifies the row exists before a proposal item is ever
+  created), the same way `page_id` already has no cross-backend FK either.
 
 ## Consequences
 

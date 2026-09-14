@@ -483,31 +483,51 @@ fixture and failing the other means something was hard-coded that should not hav
 
 ---
 
-## P8 — AI proposed updates · 2 weeks
+## P8 — AI proposed updates · 2 weeks · 🔶 Implemented as P8 Lite
 
 **Goal:** 50 supervised proposals applied with zero unintended changes.
 
-**Prerequisites:** P7 gate passed.
+**Prerequisites:** P7 gate passed. *(Not yet literally true — P7's own golden-question accuracy run
+is still pending a working `OPENROUTER_API_KEY`, as noted in P7's own status above. P8 Lite's
+architecture and tests do not depend on that number; only the final "switch AI on for real" go/no-go
+does.)*
+
+**Status:** implemented as **P8 Lite** — sized for this project's actual ~10-staff scale rather than
+the original enterprise-shaped spec, per [ADR 0004](ADR/0004-ai-proposal-flow.md)'s "P8 Lite — what
+was actually built" section. Deliberate simplifications, all recorded there in full:
+
+- Two propose tools only (`propose_update`, `propose_status_change`) — no `propose_create`/
+  `propose_delete`.
+- Record resolution reuses the existing read tools' own result lists (a search returning two matches
+  is the disambiguation) rather than a second, parallel `filter`-based resolver.
+- No separate `change_request` intent-router label — a change request flows through the same
+  tool-calling loop as a question.
+- No bulk-proposal checkbox UI — every proposal built by this code is single-item by construction,
+  though the apply/cancel logic itself is written generically over however many items a proposal has.
 
 | # | Step | Files |
 |---|---|---|
 | 8.1 | Propose tools — **create proposals only, never write** | `app/ai/tools/propose_tools.py` |
-| 8.2 | Server-side resolution: exactly one record, or return a disambiguation list. **Never pick** | `app/ai/proposals.py` |
+| 8.2 | Record resolution via existing read tools; the propose tool verifies the id against the database | same |
 | 8.3 | Server computes `before_data` / `after_data` from the database | same |
-| 8.4 | Validate against schema, types, options, references, and the Owner's rules | same |
+| 8.4 | Validate against schema, types, options, and references (P8's own scope; `page_validations` was removed as an unrelated, earlier product decision) | same |
 | 8.5 | **Recalculate formula columns** so the diff shows downstream effects | same |
 | 8.6 | Persist with `PENDING`, 10-minute TTL, `expected_version` per item | same |
-| 8.7 | Apply endpoint: re-validate, check versions, one transaction, audit `source = 'AI'` | `app/routers/ai.py` |
-| 8.8 | Cancel + expiry handling | same |
-| 8.9 | Blast radius: cap 20 items; >5 records renders per-item checkboxes and a bulk warning | `app/ai/guardrails.py` |
-| 8.10 | Proposal card with the **UPDATE** button | `lib/features/ai/presentation/widgets/proposal_card.dart` |
+| 8.7 | Apply endpoint: re-validate, check versions, one transaction, audit `source = 'AI'` | `app/ai/proposals.py`, `app/routers/ai.py` |
+| 8.8 | Cancel + lazy expiry handling | `app/ai/proposals.py` |
+| 8.9 | Blast radius: every propose tool is single-item by construction; the apply/cancel loop is written generically for a future bulk tool but no per-item-checkbox UI was needed at this scale | — |
+| 8.10 | Proposal card with the **UPDATE**/**CANCEL** buttons | `lib/features/ai/presentation/widgets/proposal_card.dart` |
 
-**Tests:** `test_proposal_flow`, `test_proposal_stale_version` (409, **optimistic locking**),
-expired proposal returns 409 and changes nothing, cannot be applied twice, cancelling leaves data
-untouched, `before_data` matches the **database** not the model's claim, and no tool can mutate the
-database directly (asserted against the registry).
+**Tests:** `test_propose_tools`, `test_proposal_apply` (stale-version 409, expired 409, double-apply
+rejected, one-transaction rollback, audit with `source='AI'`), `test_proposal_lifecycle` (cancel,
+lazy expiry), `test_no_direct_mutation` (walks the real tool registry and proves every
+`kind="propose"` tool leaves the target business row byte-for-byte unchanged), extended
+`test_tool_schemas`/`test_manager_cannot_access_ai`/`test_permissions_matrix` for the two new routes.
+`before_data` matching the database, not the model's claim, is asserted explicitly.
 
-**Done when:** 50 supervised proposals applied with zero unintended changes.
+**Done when:** 50 supervised proposals applied with zero unintended changes. *(The architecture,
+guardrails, and automated test suite are complete and green; running 50 real supervised proposals
+against a live model is, like P7's golden-question run, blocked on a working `OPENROUTER_API_KEY`.)*
 
 ---
 
