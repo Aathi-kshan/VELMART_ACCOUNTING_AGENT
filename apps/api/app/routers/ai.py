@@ -13,6 +13,7 @@ read-only `ai_reader_session`.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,8 @@ from app.core.context import SecurityContext
 from app.dependencies.db import get_ai_reader_session, get_rls_session
 from app.dependencies.guards import require_owner
 from app.schemas.ai import (
+    ProposalChangeOut,
+    ProposalOut,
     ProposalStatusResponse,
     ProvenanceOut,
     SendAiMessageRequest,
@@ -31,6 +34,31 @@ from app.schemas.ai import (
 )
 
 router = APIRouter(tags=["ai"])
+
+
+def _build_proposal_out(proposal_results: list[dict[str, Any]]) -> ProposalOut | None:
+    """The most recent propose-tool result this message produced, shaped
+    for the Flutter proposal card — `changes` is every field where
+    `after` differs from `before`, the same rule
+    `app/ai/proposals.py`'s apply-time delta derivation is built from
+    (that one additionally excludes FORMULA/generated columns, since
+    those are display-only here but never settable at apply time)."""
+    if not proposal_results:
+        return None
+    latest = proposal_results[-1]
+    before, after = latest["before"], latest["after"]
+    changes = [
+        ProposalChangeOut(column=key, before=before.get(key), after=value)
+        for key, value in after.items()
+        if before.get(key) != value
+    ]
+    return ProposalOut(
+        id=latest["proposal_id"],
+        summary=latest["summary"],
+        expires_at=latest["expires_at"],
+        page=latest["page"],
+        changes=changes,
+    )
 
 
 @router.post("/ai/sessions", response_model=StartAiSessionResponse, status_code=201)
@@ -65,7 +93,7 @@ async def send_ai_message(
         tool_calls=[
             ToolCallOut(tool=c["tool"], duration_ms=c["duration_ms"]) for c in result.tool_calls
         ],
-        proposal=None,
+        proposal=_build_proposal_out(result.proposals),
         cost_usd=str(result.cost_usd),
         partial=result.partial,
     )

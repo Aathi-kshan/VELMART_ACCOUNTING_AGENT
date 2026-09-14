@@ -70,6 +70,13 @@ class PipelineResult:
     answer: str
     tool_calls: list[dict[str, Any]]
     provenance: list[Provenance]
+    #: Raw results from any `propose_update`/`propose_status_change` calls
+    #: this message made, in call order — almost always 0 or 1 in P8 Lite
+    #: (each tool call creates exactly one proposal), kept as a list rather
+    #: than collapsed to a single value so a second call in the same
+    #: message is never silently dropped. `app/routers/ai.py` shapes the
+    #: last one into the wire response.
+    proposals: list[dict[str, Any]]
     cost_usd: Decimal
     partial: bool
 
@@ -80,6 +87,7 @@ class SendMessageResult:
     answer: str
     tool_calls: list[dict[str, Any]]
     provenance: list[Provenance]
+    proposals: list[dict[str, Any]]
     cost_usd: Decimal
     partial: bool
 
@@ -195,6 +203,7 @@ async def run_pipeline(
             answer="The AI model is not configured yet. Please contact support.",
             tool_calls=[],
             provenance=[],
+            proposals=[],
             cost_usd=Decimal("0"),
             partial=True,
         )
@@ -202,6 +211,7 @@ async def run_pipeline(
     total_cost = Decimal("0")
     tool_call_log: list[dict[str, Any]] = []
     provenance: list[Provenance] = []
+    proposal_results: list[dict[str, Any]] = []
 
     try:
         pages = await list_pages_tool(ctx=ctx, session=ai_reader_session, params=ListPagesParams())
@@ -214,11 +224,18 @@ async def run_pipeline(
                 ),
                 tool_calls=[],
                 provenance=[],
+                proposals=[],
                 cost_usd=Decimal("0"),
                 partial=False,
             )
 
-        system_prompt = _load_prompt("system.md") + "\n\n" + _load_prompt("read_agent.md")
+        system_prompt = (
+            _load_prompt("system.md")
+            + "\n\n"
+            + _load_prompt("read_agent.md")
+            + "\n\n"
+            + _load_prompt("write_agent.md")
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt + "\n\n" + render_page_list_block(pages)},
             {"role": "user", "content": message},
@@ -236,6 +253,7 @@ async def run_pipeline(
                     ),
                     tool_calls=tool_call_log,
                     provenance=provenance,
+                    proposals=proposal_results,
                     cost_usd=total_cost,
                     partial=True,
                 )
@@ -252,6 +270,7 @@ async def run_pipeline(
                     answer=response.content or "",
                     tool_calls=tool_call_log,
                     provenance=provenance,
+                    proposals=proposal_results,
                     cost_usd=total_cost,
                     partial=False,
                 )
@@ -283,6 +302,7 @@ async def run_pipeline(
                         ),
                         tool_calls=tool_call_log,
                         provenance=provenance,
+                        proposals=proposal_results,
                         cost_usd=total_cost,
                         partial=True,
                     )
@@ -296,6 +316,9 @@ async def run_pipeline(
                 budgets.record_tool_result(call.name, result, content)
                 tool_call_log.append({"tool": call.name, "duration_ms": duration_ms})
                 provenance.extend(call_provenance)
+                tool_def = TOOL_REGISTRY.get(call.name)
+                if tool_def is not None and tool_def.kind == "propose" and "error" not in result:
+                    proposal_results.append(result)
                 messages.append(
                     {**build_tool_result_message(call.name, content), "tool_call_id": call.id}
                 )
@@ -308,6 +331,7 @@ async def run_pipeline(
                         ),
                         tool_calls=tool_call_log,
                         provenance=provenance,
+                        proposals=proposal_results,
                         cost_usd=total_cost,
                         partial=True,
                     )
@@ -316,6 +340,7 @@ async def run_pipeline(
             answer="I couldn't reach the AI model provider just now. Please try again shortly.",
             tool_calls=tool_call_log,
             provenance=provenance,
+            proposals=proposal_results,
             cost_usd=total_cost,
             partial=True,
         )
@@ -383,6 +408,7 @@ async def send_message(
         answer=result.answer,
         tool_calls=result.tool_calls,
         provenance=result.provenance,
+        proposals=result.proposals,
         cost_usd=result.cost_usd,
         partial=result.partial,
     )

@@ -1,7 +1,9 @@
-"""Request/response shapes for the AI read endpoints (plan section 16, P7.6;
-docs/API.md §9). `proposal` is always `None` in P7 — parsed by the Flutter
-client so its shape is stable once P8 starts populating it, never rendered
-before then.
+"""Request/response shapes for the AI read/propose endpoints (plan section
+16, P7.6, P8 Lite; docs/API.md §9). `proposal` is now populated for real
+(P8) when the AI called `propose_update`/`propose_status_change` while
+answering a message — the same shape `app/ai/proposals.py`'s apply-time
+delta derivation is built from, so what the Owner sees here is guaranteed
+to match what applying it would actually do.
 """
 
 from __future__ import annotations
@@ -39,12 +41,26 @@ class ProvenanceOut(BaseModel):
     date_to: str | None = Field(default=None, alias="to")
 
 
+class ProposalChangeOut(BaseModel):
+    column: str
+    before: Any
+    after: Any
+
+
+class ProposalOut(BaseModel):
+    id: str
+    summary: str
+    expires_at: str
+    page: str
+    changes: list[ProposalChangeOut]
+
+
 class SendAiMessageResponse(BaseModel):
     message_id: uuid.UUID
     answer: str
     provenance: list[ProvenanceOut] = Field(default_factory=list)
     tool_calls: list[ToolCallOut] = Field(default_factory=list)
-    proposal: dict[str, Any] | None = None
+    proposal: ProposalOut | None = None
     cost_usd: str
     partial: bool
 
