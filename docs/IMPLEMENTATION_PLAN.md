@@ -442,9 +442,18 @@ schema change during the offline window produces a clear failure rather than a b
 
 ---
 
-## P7 — AI read and analysis · 3 weeks
+## P7 — AI read and analysis · 3 weeks · 🔶 Implemented, accuracy gate pending
 
 **Goal:** ≥ 90% correct on **two differently-structured fixture companies**, zero confidently-wrong
+numbers.
+
+**Status:** every step below (7.1–7.14) is implemented and covered by automated tests; the full
+backend (475 tests) and Flutter (77 tests) suites are green. The one thing not yet verified is the
+**"Done when" bar itself** — `tests/ai/test_golden_questions.py`'s two accuracy tests are written and
+ready (`-m slow`) but have not been run against a real model: the `OPENROUTER_API_KEY` configured in
+the dev environment does not authenticate (confirmed independently via a direct call to OpenRouter's
+own `/auth/key`). Run `uv run pytest tests/ai/test_golden_questions.py -m slow -q` once a working key
+is set, and update this line once it clears ≥ 90% on both fixtures with zero confidently-wrong
 numbers.
 
 **Prerequisites:** P4 and P5 solid, **real data going in daily.** Do not start early.
