@@ -30,7 +30,11 @@ from app.ai.prompts.schema_block import render_page_list_block
 from app.ai.provenance import Provenance, build_provenance
 from app.ai.providers.openrouter import ModelResponse, OpenRouterError, ToolCall, call_model
 from app.ai.router import classify_intent
-from app.ai.tools import entity_tools, read_tools  # noqa: F401 - populate TOOL_REGISTRY
+from app.ai.tools import (  # noqa: F401 - populate TOOL_REGISTRY
+    entity_tools,
+    propose_tools,
+    read_tools,
+)
 from app.ai.tools.discovery_tools import ListPagesParams
 from app.ai.tools.discovery_tools import list_pages as list_pages_tool
 from app.ai.tools.registry import TOOL_REGISTRY
@@ -137,14 +141,32 @@ def _partial_answer(reason: str, tool_calls: list[dict[str, Any]]) -> str:
 
 
 async def _execute_tool_call(
-    ctx: SecurityContext, session: AsyncSession, call: ToolCall
+    ctx: SecurityContext,
+    ai_reader_session: AsyncSession,
+    bookkeeping_session: AsyncSession,
+    ai_session_id: uuid.UUID,
+    call: ToolCall,
 ) -> tuple[dict[str, Any], list[Provenance]]:
+    """A `"read"` tool always runs on `ai_reader_session` (SELECT-only,
+    structurally incapable of writing anything). A `"propose"` tool runs on
+    `bookkeeping_session` instead, since it has to INSERT its own
+    `AiProposal`/`AiProposalItem` row — the only extra thing it's ever
+    handed is `ai_session_id`, never business-table write access beyond
+    what its own (small, reviewed) implementation does."""
     tool = TOOL_REGISTRY.get(call.name)
     if tool is None:
         return {"error": f"Unknown tool: {call.name!r}"}, []
+
+    kwargs: dict[str, Any] = {"ctx": ctx}
+    if tool.kind == "propose":
+        kwargs["session"] = bookkeeping_session
+        kwargs["ai_session_id"] = ai_session_id
+    else:
+        kwargs["session"] = ai_reader_session
+
     try:
         params = tool.params_model(**call.arguments)
-        result = await tool.fn(ctx=ctx, session=session, params=params)
+        result = await tool.fn(params=params, **kwargs)
     except (ValidationError, AppError) as exc:
         return {"error": str(exc)}, []
     return result, _provenance_for(call.name, result)
@@ -154,11 +176,18 @@ def _tool_specs() -> list[tuple[str, str, dict[str, Any]]]:
     return [(t.name, t.description, t.schema) for t in TOOL_REGISTRY.values()]
 
 
-async def run_read_pipeline(
-    ai_reader_session: AsyncSession, ctx: SecurityContext, message: str
+async def run_pipeline(
+    ai_reader_session: AsyncSession,
+    bookkeeping_session: AsyncSession,
+    ctx: SecurityContext,
+    ai_session_id: uuid.UUID,
+    message: str,
 ) -> PipelineResult:
     """The tool-calling loop itself — never raises for a provider failure,
-    a budget limit, or a tool error; each becomes part of the answer."""
+    a budget limit, or a tool error; each becomes part of the answer. Named
+    generically (not `run_read_pipeline`, its P7 name) since P8's propose
+    tools run through the exact same loop, just against a different session
+    — see `_execute_tool_call`."""
     settings = get_settings()
     model = settings.AI_MODEL_DEFAULT or settings.AI_MODEL_ANALYSIS
     if not model:
@@ -259,7 +288,9 @@ async def run_read_pipeline(
                     )
 
                 call_started = time.monotonic()
-                result, call_provenance = await _execute_tool_call(ctx, ai_reader_session, call)
+                result, call_provenance = await _execute_tool_call(
+                    ctx, ai_reader_session, bookkeeping_session, ai_session_id, call
+                )
                 duration_ms = int((time.monotonic() - call_started) * 1000)
                 content = json.dumps(result, default=str)
                 budgets.record_tool_result(call.name, result, content)
@@ -333,7 +364,7 @@ async def send_message(
     bookkeeping_session.add(AiMessage(session_id=ai_session_id, role="user", content=message))
     await bookkeeping_session.flush()
 
-    result = await run_read_pipeline(ai_reader_session, ctx, message)
+    result = await run_pipeline(ai_reader_session, bookkeeping_session, ctx, ai_session_id, message)
 
     assistant_message = AiMessage(
         session_id=ai_session_id,
