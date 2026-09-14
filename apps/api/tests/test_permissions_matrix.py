@@ -214,6 +214,17 @@ async def dashboard_widget(
     return widget_id
 
 
+@pytest.fixture
+async def ai_session_id(session: AsyncSession, company: uuid.UUID, owner: uuid.UUID) -> uuid.UUID:
+    ai_session_id = uuid.uuid4()
+    await session.execute(
+        text("INSERT INTO ai_sessions (id, company_id, user_id) VALUES (:id, :company_id, :owner)"),
+        {"id": str(ai_session_id), "company_id": str(company), "owner": str(owner)},
+    )
+    await session.commit()
+    return ai_session_id
+
+
 async def _token(client: AsyncClient, email: str, password: str, *, device_id: str) -> str:
     resp = await client.post(
         "/auth/login", json={"email": email, "password": password, "device_id": device_id}
@@ -229,6 +240,7 @@ _PATH_PARAMS = {
     "{column_id}": "column_id",
     "{record_id}": "record_id",
     "{widget_id}": "widget_id",
+    "{session_id}": "ai_session_id",
 }
 
 #: Per-(method, path) overrides of `_PATH_PARAMS`, for a route whose
@@ -270,6 +282,10 @@ _BODIES: dict[tuple[str, str], dict[str, object]] = {
         "page_key": "matrix_page",
     },
     ("PATCH", "/dashboard/widgets/{widget_id}"): {"title": "Matrix Renamed Widget"},
+    ("POST", "/ai/sessions"): {},
+    ("POST", "/ai/sessions/{session_id}/messages"): {
+        "message": "How much did we spend last month?"
+    },
 }
 
 
@@ -352,6 +368,7 @@ async def test_endpoint_permissions(
     page_record: uuid.UUID,
     ledger_record: uuid.UUID,
     dashboard_widget: uuid.UUID,
+    ai_session_id: uuid.UUID,
 ) -> None:
     expected = rule.expected_status(role)
     resp = await _call(
@@ -368,6 +385,7 @@ async def test_endpoint_permissions(
             "record_id": page_record,
             "ledger_record_id": ledger_record,
             "widget_id": dashboard_widget,
+            "ai_session_id": ai_session_id,
         },
     )
     if expected >= 400:

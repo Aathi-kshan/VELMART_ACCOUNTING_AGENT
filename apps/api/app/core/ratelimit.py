@@ -106,6 +106,19 @@ async def hit_api_user(
     )
 
 
+async def hit_ai_user(
+    session: AsyncSession, user_id: uuid.UUID, *, now: datetime | None = None
+) -> RateLimitResult:
+    """20 AI messages per 5 minutes per user (plan sections 16.9, 20.3)."""
+    return await hit(
+        session,
+        bucket_key=f"ai:user:{user_id}",
+        limit=AI_MESSAGES_PER_5_MIN,
+        window_seconds=300,
+        now=now,
+    )
+
+
 async def purge_expired(session: AsyncSession, *, older_than_hours: int = 24) -> int:
     """Drop stale windows. Called by the nightly maintenance job."""
     cutoff = datetime.now(tz=UTC) - timedelta(hours=older_than_hours)

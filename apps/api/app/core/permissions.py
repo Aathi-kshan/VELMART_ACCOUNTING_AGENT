@@ -92,6 +92,10 @@ PERMISSION_MATRIX: tuple[PermissionRule, ...] = (
     PermissionRule("PATCH", "/dashboard/widgets/{widget_id}", Access.OWNER_ONLY),
     PermissionRule("DELETE", "/dashboard/widgets/{widget_id}", Access.OWNER_ONLY),
     PermissionRule("GET", "/dashboard/digest", Access.AUTHENTICATED),
+    # P7 — AI read & analysis (plan section 16.2): Owner-only at every layer,
+    # a manager gets a flat 403, never a filtered response.
+    PermissionRule("POST", "/ai/sessions", Access.OWNER_ONLY),
+    PermissionRule("POST", "/ai/sessions/{session_id}/messages", Access.OWNER_ONLY),
 )
 
 #: Endpoints that exist but are intentionally absent from PERMISSION_MATRIX

@@ -54,4 +54,4 @@ async def classify_intent(message: str, pages: list[dict[str, Any]]) -> IntentLa
         ],
         max_tokens=10,
     )
-    return _parse_label(response.content)
+    return _parse_label(response.content or "")

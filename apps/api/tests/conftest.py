@@ -166,19 +166,26 @@ async def _clean_tables(engine) -> AsyncIterator[None]:  # noqa: ANN001
         )
         tables = [t for (t,) in result.all() if t not in _PRESERVE]
         if tables:
-            await conn.execute(
-                text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE")
-            )
+            await conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
-    """An HTTP client wired to the app in-process."""
+    """An HTTP client wired to the app in-process.
+
+    Clears the read-write *and* read-only (`ai_reader`) engine caches —
+    each is a process-lifetime `lru_cache`, but every test function gets its
+    own asyncio event loop, and a pooled asyncpg connection from a previous
+    test's loop raises "attached to a different loop" if reused here.
+    """
+    from app.db.readonly import get_readonly_engine, get_readonly_sessionmaker
     from app.db.session import get_engine, get_sessionmaker
     from app.main import create_app
 
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
+    get_readonly_engine.cache_clear()
+    get_readonly_sessionmaker.cache_clear()
 
     app = create_app()
     transport = ASGITransport(app=app)

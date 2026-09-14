@@ -21,6 +21,7 @@ from app.db.readonly import dispose_readonly_engine
 from app.db.session import dispose_engine
 from app.routers import (
     access,
+    ai,
     audit,
     auth,
     columns,
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(exports.router)
     app.include_router(audit.router)
+    app.include_router(ai.router)
     return app
 
 
