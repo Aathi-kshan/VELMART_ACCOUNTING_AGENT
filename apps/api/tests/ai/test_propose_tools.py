@@ -526,3 +526,78 @@ class TestProposeStatusChangeRejections:
                     value="PAID",
                 ),
             )
+
+
+class TestFormulaImpact:
+    """Slice 4 — a proposal on a page with a FORMULA column shows the
+    correctly recalculated downstream value, using the same
+    `formula_service.apply_formulas` every real read/update already uses —
+    no new formula code."""
+
+    @pytest.fixture
+    async def payroll_page(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+    ) -> dict:
+        headers = await _owner_headers(client, owner_password)
+        resp = await client.post(
+            "/pages",
+            json={
+                "name": "Payroll",
+                "columns": [
+                    {"name": "Employee", "data_type": "TEXT"},
+                    {"name": "Basic Salary", "data_type": "CURRENCY"},
+                    {"name": "Allowance", "data_type": "CURRENCY"},
+                    {"name": "Deduction", "data_type": "CURRENCY"},
+                    {
+                        "name": "Net Salary",
+                        "data_type": "FORMULA",
+                        "config": {"expression": "basic_salary + allowance - deduction"},
+                    },
+                ],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        page = resp.json()
+        record_resp = await client.post(
+            f"/pages/{page['id']}/records",
+            json={
+                "occurred_at": "2026-01-05T09:00:00Z",
+                "data": {
+                    "employee": "John Perera",
+                    "basic_salary": "60000.00",
+                    "allowance": "10000.00",
+                    "deduction": "5000.00",
+                },
+            },
+            headers=headers,
+        )
+        assert record_resp.status_code == 201, record_resp.text
+        page["record"] = record_resp.json()
+        return page
+
+    async def test_before_and_after_show_the_recalculated_formula(
+        self,
+        session: AsyncSession,
+        owner_ctx: SecurityContext,
+        ai_session_id: uuid.UUID,
+        payroll_page: dict,
+    ) -> None:
+        record = payroll_page["record"]
+        assert Decimal(record["data"]["net_salary"]) == Decimal("65000.00")
+
+        result = await propose_update(
+            ctx=owner_ctx,
+            session=session,
+            ai_session_id=ai_session_id,
+            params=ProposeUpdateParams(
+                page_key="payroll", record_id=record["id"], changes={"basic_salary": "75000.00"}
+            ),
+        )
+
+        assert Decimal(result["before"]["net_salary"]) == Decimal("65000.00")
+        assert Decimal(result["after"]["net_salary"]) == Decimal("80000.00")
+
+        item = await _proposal_item_row(session, result["proposal_id"])
+        assert Decimal(item.before_data["net_salary"]) == Decimal("65000.00")
+        assert Decimal(item.after_data["net_salary"]) == Decimal("80000.00")
