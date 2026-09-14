@@ -16,7 +16,12 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.tools.propose_tools import ProposeUpdateParams, propose_update
+from app.ai.tools.propose_tools import (
+    ProposeStatusChangeParams,
+    ProposeUpdateParams,
+    propose_status_change,
+    propose_update,
+)
 from app.core.context import SecurityContext
 from app.core.errors import NotFoundError, ValidationFailedError
 from app.models.user import UserRole
@@ -386,5 +391,138 @@ class TestProposeUpdateRejections:
                 ai_session_id=ai_session_id,
                 params=ProposeUpdateParams(
                     page_key="loan_ledger", record_id=record["id"], changes={"amount": "2000.00"}
+                ),
+            )
+
+
+@pytest.fixture
+async def cheque_record(
+    client: AsyncClient, owner_password: str, system_page_ids: dict[str, str]
+) -> dict:
+    headers = await _owner_headers(client, owner_password)
+    resp = await client.post(
+        f"/pages/{system_page_ids['cheques']}/records",
+        json={
+            "occurred_at": "2026-01-05T09:00:00Z",
+            "data": {"cheque_number": "CHQ-1", "amount": "1000.00"},
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+class TestProposeStatusChangeCreatesAPendingProposal:
+    async def test_target_record_is_untouched(
+        self,
+        session: AsyncSession,
+        owner_ctx: SecurityContext,
+        ai_session_id: uuid.UUID,
+        cheque_record: dict,
+    ) -> None:
+        result = await propose_status_change(
+            ctx=owner_ctx,
+            session=session,
+            ai_session_id=ai_session_id,
+            params=ProposeStatusChangeParams(
+                page_key="cheques",
+                record_id=cheque_record["id"],
+                column_key="cheque_status",
+                value="PAID",
+            ),
+        )
+
+        proposal = await _proposal_row(session, result["proposal_id"])
+        assert proposal.status == "PENDING"
+        item = await _proposal_item_row(session, result["proposal_id"])
+        assert item.operation == "STATUS_CHANGE"
+        assert item.expected_version == cheque_record["version"]
+
+        row = (
+            await session.execute(
+                text("SELECT cheque_status, version FROM cheques WHERE id = :id"),
+                {"id": cheque_record["id"]},
+            )
+        ).one()
+        assert row.cheque_status == "PENDING"
+        assert row.version == cheque_record["version"]
+
+    async def test_before_and_after_reflect_the_real_status(
+        self,
+        session: AsyncSession,
+        owner_ctx: SecurityContext,
+        ai_session_id: uuid.UUID,
+        cheque_record: dict,
+    ) -> None:
+        result = await propose_status_change(
+            ctx=owner_ctx,
+            session=session,
+            ai_session_id=ai_session_id,
+            params=ProposeStatusChangeParams(
+                page_key="cheques",
+                record_id=cheque_record["id"],
+                column_key="cheque_status",
+                value="PAID",
+            ),
+        )
+
+        assert result["before"]["cheque_status"] == "PENDING"
+        assert result["after"]["cheque_status"] == "PAID"
+
+
+class TestProposeStatusChangeRejections:
+    async def test_non_protected_column_is_rejected(
+        self,
+        session: AsyncSession,
+        owner_ctx: SecurityContext,
+        ai_session_id: uuid.UUID,
+        cheque_record: dict,
+    ) -> None:
+        with pytest.raises(ValidationFailedError):
+            await propose_status_change(
+                ctx=owner_ctx,
+                session=session,
+                ai_session_id=ai_session_id,
+                params=ProposeStatusChangeParams(
+                    page_key="cheques",
+                    record_id=cheque_record["id"],
+                    column_key="payee_name",
+                    value="Someone",
+                ),
+            )
+
+    async def test_out_of_options_value_is_rejected(
+        self,
+        session: AsyncSession,
+        owner_ctx: SecurityContext,
+        ai_session_id: uuid.UUID,
+        cheque_record: dict,
+    ) -> None:
+        with pytest.raises(ValidationFailedError):
+            await propose_status_change(
+                ctx=owner_ctx,
+                session=session,
+                ai_session_id=ai_session_id,
+                params=ProposeStatusChangeParams(
+                    page_key="cheques",
+                    record_id=cheque_record["id"],
+                    column_key="cheque_status",
+                    value="CANCELLED",
+                ),
+            )
+
+    async def test_nonexistent_record_is_not_found(
+        self, session: AsyncSession, owner_ctx: SecurityContext, ai_session_id: uuid.UUID
+    ) -> None:
+        with pytest.raises(NotFoundError):
+            await propose_status_change(
+                ctx=owner_ctx,
+                session=session,
+                ai_session_id=ai_session_id,
+                params=ProposeStatusChangeParams(
+                    page_key="cheques",
+                    record_id=str(uuid.uuid4()),
+                    column_key="cheque_status",
+                    value="PAID",
                 ),
             )

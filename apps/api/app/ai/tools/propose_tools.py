@@ -32,8 +32,9 @@ from app.core.context import SecurityContext
 from app.core.dates import now_utc
 from app.core.errors import NotFoundError, ValidationFailedError
 from app.models.ai import AiProposal, AiProposalItem, ProposalStatus
-from app.models.page import PageKind
-from app.repositories.records import generated_columns_for, get_row, to_wire_value
+from app.models.page import Page, PageKind
+from app.models.page_column import ColumnType, PageColumn
+from app.repositories.records import RecordHandle, generated_columns_for, get_row, to_wire_value
 from app.schemas.dynamic import build_record_model
 from app.services import formula_service
 from app.services.audit_service import write_audit_log
@@ -43,13 +44,17 @@ from app.services.record_service import validate_payload, validate_references
 PROPOSAL_TTL_MINUTES = 10
 
 
-def _protected_keys(columns: list[Any]) -> set[str]:
+def _protected_keys(columns: list[PageColumn]) -> set[str]:
     return {c.key for c in columns if c.is_protected}
 
 
 async def _resolve_target_record(
-    session: AsyncSession, ctx: SecurityContext, page: Any, columns: list[Any], record_id_str: str
-) -> tuple[uuid.UUID, Any]:
+    session: AsyncSession,
+    ctx: SecurityContext,
+    page: Page,
+    columns: list[PageColumn],
+    record_id_str: str,
+) -> tuple[uuid.UUID, RecordHandle]:
     try:
         record_id = uuid.UUID(record_id_str)
     except ValueError as exc:
@@ -59,6 +64,101 @@ async def _resolve_target_record(
     if handle is None or handle.is_deleted:
         raise NotFoundError("No such record.")
     return record_id, handle
+
+
+def _compute_before_after(
+    columns: list[PageColumn], handle: RecordHandle, page: Page, changes: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`handle.data` is already wire format (a money string, ISO date text —
+    plan section 9.1) and never carries a FORMULA key (never stored).
+    `changes` is Python-typed, straight out of pydantic's `.model_dump()` —
+    `update_row` normally wire-converts as a side effect of writing and
+    re-reading the row; a proposal never writes, so it does the same
+    conversion explicitly here before computing the formula impact."""
+    columns_by_key = {c.key: c for c in columns}
+    generated = generated_columns_for(page)
+
+    before_data = formula_service.apply_formulas(columns, dict(handle.data))
+
+    merged = dict(handle.data)
+    merged.update(changes)
+    for key in generated:
+        merged.pop(key, None)
+    full_validated = validate_payload(columns, merged, readonly_extra=generated)
+    wire_after = {
+        key: to_wire_value(columns_by_key[key], value)
+        for key, value in full_validated.items()
+        if key in columns_by_key
+    }
+    after_data = formula_service.apply_formulas(columns, wire_after)
+    return before_data, after_data
+
+
+async def _create_proposal(
+    session: AsyncSession,
+    ctx: SecurityContext,
+    ai_session_id: uuid.UUID,
+    *,
+    page: Page,
+    record_id: uuid.UUID,
+    handle: RecordHandle,
+    operation: str,
+    before_data: dict[str, Any],
+    after_data: dict[str, Any],
+    summary: str,
+) -> dict[str, Any]:
+    proposal = AiProposal(
+        company_id=ctx.company_id,
+        session_id=ai_session_id,
+        created_by=ctx.user_id,
+        summary=summary,
+        status=ProposalStatus.PENDING,
+        expires_at=now_utc() + timedelta(minutes=PROPOSAL_TTL_MINUTES),
+    )
+    session.add(proposal)
+    await session.flush()
+
+    session.add(
+        AiProposalItem(
+            proposal_id=proposal.id,
+            operation=operation,
+            page_id=page.id,
+            record_id=record_id,
+            expected_version=handle.version,
+            before_data=before_data,
+            after_data=after_data,
+            position=0,
+        )
+    )
+    await session.flush()
+
+    await write_audit_log(
+        session,
+        company_id=ctx.company_id,
+        action="AI_PROPOSAL_CREATED",
+        entity_type="ai_proposal",
+        entity_id=proposal.id,
+        page_id=page.id,
+        actor_user_id=ctx.user_id,
+        actor_role=ctx.role.value,
+        new_data={"summary": summary, "record_id": str(record_id)},
+        source="AI",
+        ai_session_id=ai_session_id,
+    )
+
+    return {
+        "proposal_id": str(proposal.id),
+        "summary": summary,
+        "expires_at": proposal.expires_at.isoformat(),
+        "page": page.name,
+        "before": before_data,
+        "after": after_data,
+    }
+
+
+# --------------------------------------------------------------------------
+# propose_update
+# --------------------------------------------------------------------------
 
 
 class ProposeUpdateParams(BaseModel):
@@ -115,76 +215,21 @@ async def propose_update(
 
     await validate_references(session, ctx, columns, validated_changes)
 
-    columns_by_key = {c.key: c for c in columns}
-    # `handle.data` is already wire format (a money string, ISO date text —
-    # plan section 9.1) and never carries a FORMULA key (never stored).
-    # `validated_changes`/`full_validated` below come straight out of
-    # pydantic's `.model_dump()`, which is Python-typed (`Decimal`, `date`,
-    # ...) — `update_row` normally does this wire conversion as a side
-    # effect of writing and re-reading the row; a proposal never writes, so
-    # it has to do the same conversion explicitly here.
-    before_data = formula_service.apply_formulas(columns, dict(handle.data))
-
-    merged = dict(handle.data)
-    merged.update(validated_changes)
-    for key in generated:
-        merged.pop(key, None)
-    full_validated = validate_payload(columns, merged, readonly_extra=generated)
-    wire_after = {
-        key: to_wire_value(columns_by_key[key], value)
-        for key, value in full_validated.items()
-        if key in columns_by_key
-    }
-    after_data = formula_service.apply_formulas(columns, wire_after)
-
+    before_data, after_data = _compute_before_after(columns, handle, page, validated_changes)
     summary = f"Update {page.name}" + (f" — {params.reason}" if params.reason else "")
-    proposal = AiProposal(
-        company_id=ctx.company_id,
-        session_id=ai_session_id,
-        created_by=ctx.user_id,
-        summary=summary,
-        status=ProposalStatus.PENDING,
-        expires_at=now_utc() + timedelta(minutes=PROPOSAL_TTL_MINUTES),
-    )
-    session.add(proposal)
-    await session.flush()
 
-    session.add(
-        AiProposalItem(
-            proposal_id=proposal.id,
-            operation="UPDATE",
-            page_id=page.id,
-            record_id=record_id,
-            expected_version=handle.version,
-            before_data=before_data,
-            after_data=after_data,
-            position=0,
-        )
-    )
-    await session.flush()
-
-    await write_audit_log(
+    return await _create_proposal(
         session,
-        company_id=ctx.company_id,
-        action="AI_PROPOSAL_CREATED",
-        entity_type="ai_proposal",
-        entity_id=proposal.id,
-        page_id=page.id,
-        actor_user_id=ctx.user_id,
-        actor_role=ctx.role.value,
-        new_data={"summary": summary, "record_id": str(record_id)},
-        source="AI",
-        ai_session_id=ai_session_id,
+        ctx,
+        ai_session_id,
+        page=page,
+        record_id=record_id,
+        handle=handle,
+        operation="UPDATE",
+        before_data=before_data,
+        after_data=after_data,
+        summary=summary,
     )
-
-    return {
-        "proposal_id": str(proposal.id),
-        "summary": summary,
-        "expires_at": proposal.expires_at.isoformat(),
-        "page": page.name,
-        "before": before_data,
-        "after": after_data,
-    }
 
 
 register_tool(
@@ -199,5 +244,74 @@ register_tool(
         "column) must go through propose_status_change instead."
     ),
     params_model=ProposeUpdateParams,
+    kind="propose",
+)
+
+
+# --------------------------------------------------------------------------
+# propose_status_change
+# --------------------------------------------------------------------------
+
+
+class ProposeStatusChangeParams(BaseModel):
+    page_key: str = Field(description="A page key returned by list_pages.")
+    record_id: str = Field(
+        description="A real record id obtained from an earlier tool call — never invented."
+    )
+    column_key: str = Field(description="A protected SELECT column's key, from get_page_schema.")
+    value: str = Field(
+        description="The new value — must be one of the column's configured options."
+    )
+
+
+async def propose_status_change(
+    *,
+    ctx: SecurityContext,
+    session: AsyncSession,
+    ai_session_id: uuid.UUID,
+    params: ProposeStatusChangeParams,
+) -> dict[str, Any]:
+    page, columns = await resolve_page(session, ctx, params.page_key)
+    record_id, handle = await _resolve_target_record(session, ctx, page, columns, params.record_id)
+
+    columns_by_key = {c.key: c for c in columns}
+    column = columns_by_key.get(params.column_key)
+    if column is None or not column.is_protected or column.data_type is not ColumnType.SELECT:
+        raise ValidationFailedError(f"{params.column_key!r} is not a protected field on this page.")
+
+    options = column.config.get("options") or []
+    if params.value not in options:
+        raise ValidationFailedError(f"{column.name}: must be one of {options}.")
+
+    before_data, after_data = _compute_before_after(
+        columns, handle, page, {params.column_key: params.value}
+    )
+    summary = f"Change {column.name} on {page.name} to {params.value!r}"
+
+    return await _create_proposal(
+        session,
+        ctx,
+        ai_session_id,
+        page=page,
+        record_id=record_id,
+        handle=handle,
+        operation="STATUS_CHANGE",
+        before_data=before_data,
+        after_data=after_data,
+        summary=summary,
+    )
+
+
+register_tool(
+    propose_status_change,
+    name="propose_status_change",
+    description=(
+        "Propose changing a protected status-style field (e.g. a cheque's "
+        "status) on a single existing record — the only way to propose a "
+        "change to a protected column; propose_update refuses them. Never "
+        "writes directly; creates a pending proposal for the Owner to "
+        "approve."
+    ),
+    params_model=ProposeStatusChangeParams,
     kind="propose",
 )
