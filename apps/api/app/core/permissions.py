@@ -98,6 +98,7 @@ PERMISSION_MATRIX: tuple[PermissionRule, ...] = (
     PermissionRule("POST", "/ai/sessions/{session_id}/messages", Access.OWNER_ONLY),
     # P8 Lite — AI proposed updates: same Owner-only rule, no exceptions.
     PermissionRule("POST", "/ai/proposals/{proposal_id}/cancel", Access.OWNER_ONLY),
+    PermissionRule("POST", "/ai/proposals/{proposal_id}/apply", Access.OWNER_ONLY),
 )
 
 #: Endpoints that exist but are intentionally absent from PERMISSION_MATRIX

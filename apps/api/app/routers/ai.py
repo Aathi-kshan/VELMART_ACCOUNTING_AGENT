@@ -79,3 +79,13 @@ async def cancel_ai_proposal(
 ) -> ProposalStatusResponse:
     proposal = await proposals.cancel_proposal(session, ctx, proposal_id)
     return ProposalStatusResponse(id=proposal.id, status=proposal.status.value)
+
+
+@router.post("/ai/proposals/{proposal_id}/apply", response_model=ProposalStatusResponse)
+async def apply_ai_proposal(
+    proposal_id: uuid.UUID,
+    ctx: SecurityContext = Depends(require_owner),
+    session: AsyncSession = Depends(get_rls_session),
+) -> ProposalStatusResponse:
+    proposal = await proposals.apply_proposal(session, ctx, proposal_id)
+    return ProposalStatusResponse(id=proposal.id, status=proposal.status.value)
