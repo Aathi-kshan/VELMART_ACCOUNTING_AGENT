@@ -3,8 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/date/business_date.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/adaptive_scaffold.dart';
 import '../../../core/widgets/amount_text.dart';
+import '../../../core/widgets/app_card.dart';
+import '../../../core/widgets/app_data_table.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_loading_state.dart';
+import '../../../core/widgets/app_status_chip.dart';
 import '../../../core/widgets/empty_state.dart';
+import '../../../core/widgets/refreshable.dart';
 import '../application/dashboard_providers.dart';
 import '../domain/reconciliation.dart';
 
@@ -22,21 +31,34 @@ class ReconciliationScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Reconciliation')),
       body: itemsAsync.when(
-        data: (items) => _ReconciliationList(items: items),
-        loading: () => const Center(child: CircularProgressIndicator()),
+        data: (items) => _ReconciliationList(
+          items: items,
+          onRefresh: () async => ref.invalidate(reconciliationProvider),
+        ),
+        loading: () => PullToRefresh(
+          onRefresh: () async => ref.invalidate(reconciliationProvider),
+          child: const AppLoadingState(message: 'Loading reconciliation'),
+        ),
         error: (error, _) {
-          // A manager missing `view` on either daily_revenue or cash_ledger
-          // gets a 404 (docs/API.md §1.4) — that's "not available to you",
-          // not a broken screen.
           if (error is ApiException && error.isNotFound) {
-            return const EmptyState(
-              icon: Icons.balance_outlined,
-              message:
-                  'Reconciliation isn\'t available. Ask the Owner for access to '
-                  'Daily Revenue and Cash Ledger.',
+            return PullToRefresh(
+              onRefresh: () async => ref.invalidate(reconciliationProvider),
+              child: const EmptyState(
+                icon: Icons.balance_outlined,
+                title: 'Not available',
+                message:
+                    'Reconciliation isn\'t available. Ask the Owner for access to '
+                    'Daily Revenue and Cash Ledger.',
+              ),
             );
           }
-          return Center(child: Text('Could not load reconciliation.\n$error'));
+          return PullToRefresh(
+            onRefresh: () async => ref.invalidate(reconciliationProvider),
+            child: AppErrorState(
+              message: '$error',
+              onRetry: () => ref.invalidate(reconciliationProvider),
+            ),
+          );
         },
       ),
     );
@@ -44,24 +66,73 @@ class ReconciliationScreen extends ConsumerWidget {
 }
 
 class _ReconciliationList extends StatelessWidget {
-  const _ReconciliationList({required this.items});
+  const _ReconciliationList({required this.items, required this.onRefresh});
 
   final List<ReconciliationItem> items;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const EmptyState(
-        icon: Icons.balance_outlined,
-        message: 'No Daily Revenue or Cash Ledger entries yet.',
+      return PullToRefresh(
+        onRefresh: onRefresh,
+        child: const EmptyState(
+          icon: Icons.balance_outlined,
+          message: 'No Daily Revenue or Cash Ledger entries yet.',
+        ),
       );
     }
 
-    return ListView.separated(
-      padding: const EdgeInsets.all(8),
-      itemCount: items.length,
-      separatorBuilder: (context, index) => const Divider(height: 1),
-      itemBuilder: (context, index) => _ReconciliationRow(item: items[index]),
+    return PullToRefresh(
+      onRefresh: onRefresh,
+      childScrolls: true,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (AdaptiveScaffold.isExpanded(constraints.maxWidth)) {
+            return ListView(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              children: [
+                AppDataTable(
+                  columns: const [
+                    DataColumn(label: Text('Date')),
+                    DataColumn(label: Text('Revenue'), numeric: true),
+                    DataColumn(label: Text('Ledger'), numeric: true),
+                    DataColumn(label: Text('Difference'), numeric: true),
+                    DataColumn(label: Text('Status')),
+                  ],
+                  rows: [
+                    for (final item in items)
+                      DataRow(
+                        cells: [
+                          DataCell(Text(formatDate(item.businessDate))),
+                          DataCell(AmountText(item.revenueTotal)),
+                          DataCell(AmountText(item.ledgerTotal)),
+                          DataCell(
+                            AmountText(
+                              item.difference,
+                              colorByValue: !item.matches,
+                            ),
+                          ),
+                          DataCell(
+                            AppStatusChip.reconciliation(matches: item.matches),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ],
+            );
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            itemCount: items.length,
+            separatorBuilder: (context, index) =>
+                const SizedBox(height: AppSpacing.sm),
+            itemBuilder: (context, index) =>
+                _ReconciliationRow(item: items[index]),
+          );
+        },
+      ),
     );
   }
 }
@@ -73,11 +144,9 @@ class _ReconciliationRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -85,20 +154,26 @@ class _ReconciliationRow extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(formatDate(item.businessDate), style: textTheme.titleMedium),
-              if (!item.matches)
-                Icon(Icons.warning_amber_rounded, color: colorScheme.error, size: 20),
+              AppStatusChip.reconciliation(matches: item.matches),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
+          const Divider(height: 1, color: AppColors.hairline),
+          const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
-              Expanded(child: _Figure(label: 'Revenue', value: item.revenueTotal)),
-              Expanded(child: _Figure(label: 'Ledger', value: item.ledgerTotal)),
+              Expanded(
+                child: _Figure(label: 'Revenue', value: item.revenueTotal),
+              ),
+              Expanded(
+                child: _Figure(label: 'Ledger', value: item.ledgerTotal),
+              ),
               Expanded(
                 child: _Figure(
                   label: 'Difference',
                   value: item.difference,
                   emphasize: !item.matches,
+                  alignment: CrossAxisAlignment.end,
                 ),
               ),
             ],
@@ -110,22 +185,30 @@ class _ReconciliationRow extends StatelessWidget {
 }
 
 class _Figure extends StatelessWidget {
-  const _Figure({required this.label, required this.value, this.emphasize = false});
+  const _Figure({
+    required this.label,
+    required this.value,
+    this.emphasize = false,
+    this.alignment = CrossAxisAlignment.start,
+  });
 
   final String label;
   final Object value;
   final bool emphasize;
+  final CrossAxisAlignment alignment;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    // A reconciliation difference is "attention", not "blocking" (design.md
+    // §4.1's color-role table) — warning-tinted, not the same red used for
+    // a failed request.
     final valueStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
       fontWeight: emphasize ? FontWeight.bold : FontWeight.normal,
-      color: emphasize ? colorScheme.error : null,
+      color: emphasize ? AppColors.warning : null,
     );
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: alignment,
       children: [
         Text(label, style: Theme.of(context).textTheme.labelMedium),
         AmountText(value, style: valueStyle),

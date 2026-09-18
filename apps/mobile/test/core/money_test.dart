@@ -94,18 +94,19 @@ void main() {
   });
 
   group('format', () {
-    test('adds thousands separators', () {
+    test('adds thousands separators and keeps cents when they are non-zero', () {
       expect(Money.parse('1234567.89').format(), 'Rs. 1,234,567.89');
     });
 
-    test('small amounts have no separator', () {
-      expect(Money.parse('42.00').format(), 'Rs. 42.00');
+    test('omits cents for whole rupees', () {
+      expect(Money.parse('250000.00').format(), 'Rs. 250,000');
+      expect(Money.parse('42.00').format(), 'Rs. 42');
     });
 
     test('a custom currency symbol', () {
       expect(
         Money.parse('100.00').format(currencySymbol: r'$'),
-        r'$ 100.00',
+        r'$ 100',
       );
     });
   });

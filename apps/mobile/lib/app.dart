@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/theme/app_theme.dart';
 import 'routing/app_router.dart';
 
 class VelmartApp extends ConsumerWidget {
@@ -13,10 +14,7 @@ class VelmartApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Velmart',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1B5E20)),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light(),
       routerConfig: router,
     );
   }

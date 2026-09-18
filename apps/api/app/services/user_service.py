@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete, insert, update
+from sqlalchemy import delete, insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import SecurityContext
+from app.core.errors import EmailAlreadyExistsError
 from app.core.security import hash_password
 from app.models.user import User, UserRole, UserStore
 from app.repositories.base import get_for_company, list_for_company
@@ -49,6 +51,15 @@ async def _set_store_assignments(
 async def create_user(
     session: AsyncSession, ctx: SecurityContext, payload: CreateUserRequest
 ) -> User:
+    # Fast path: catches the overwhelming majority of duplicates with a
+    # clean error before ever touching the insert. `email` is CITEXT, so
+    # this comparison is already case-insensitive — no `.lower()` needed.
+    existing = await session.execute(
+        select(User.id).where(User.company_id == ctx.company_id, User.email == payload.email)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise EmailAlreadyExistsError("Email is already taken.")
+
     user = User(
         company_id=ctx.company_id,
         email=payload.email,
@@ -57,7 +68,15 @@ async def create_user(
         role=payload.role,
     )
     session.add(user)
-    await session.flush()  # assign user.id before the store rows reference it
+    try:
+        # Closes the race the pre-check above can't: two requests for the
+        # same email can both pass the SELECT before either INSERTs. The
+        # UNIQUE (company_id, email) constraint (migration 0001) is the
+        # actual source of truth; this just turns its violation into the
+        # same clean error instead of an uncaught IntegrityError.
+        await session.flush()  # assign user.id before the store rows reference it
+    except IntegrityError as exc:
+        raise EmailAlreadyExistsError("Email is already taken.") from exc
 
     if payload.role == UserRole.MANAGER and payload.store_ids:
         await _set_store_assignments(session, user_id=user.id, store_ids=payload.store_ids)

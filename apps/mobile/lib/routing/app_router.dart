@@ -15,6 +15,7 @@ import '../features/pages/presentation/page_list_screen.dart';
 import '../features/pages/presentation/record_detail_screen.dart';
 import '../features/pages/presentation/record_form_screen.dart';
 import '../features/pages/presentation/record_list_screen.dart';
+import '../features/users/presentation/users_screen.dart';
 import 'app_shell.dart';
 import 'guards.dart';
 
@@ -30,46 +31,33 @@ final routerProvider = Provider<GoRouter>((ref) {
     },
     routes: [
       GoRoute(path: '/login', name: 'login', builder: (context, state) => const LoginScreen()),
-
-      // The three tabs (plan section 22.4) — kept mounted across switches by
-      // `ShellRoute`, so `AppShell`'s nav chrome doesn't rebuild each time.
       ShellRoute(
         builder: (context, state, child) =>
             AppShell(location: state.matchedLocation, child: child),
         routes: [
           GoRoute(path: '/home', name: 'home', builder: (context, state) => const HomeScreen()),
           GoRoute(path: '/pages', name: 'pages', builder: (context, state) => const PageListScreen()),
+          GoRoute(
+            path: '/pages/:pageId/records',
+            name: 'pageRecords',
+            builder: (context, state) =>
+                RecordListScreen(pageId: state.pathParameters['pageId']!),
+          ),
+          GoRoute(path: '/ai', name: 'ai', builder: (context, state) => const AiChatScreen()),
           GoRoute(path: '/more', name: 'more', builder: (context, state) => const MoreScreen()),
+          GoRoute(
+            path: '/reconciliation',
+            name: 'reconciliation',
+            builder: (context, state) => const ReconciliationScreen(),
+          ),
+          GoRoute(path: '/audit', name: 'audit', builder: (context, state) => const AuditScreen()),
+          GoRoute(path: '/users', name: 'users', builder: (context, state) => const UsersScreen()),
         ],
-      ),
-
-      // Drill-ins — pushed on top of the shell (plan section 3.11-3.17),
-      // each with its own Scaffold/AppBar rather than the shell's chrome.
-      GoRoute(
-        path: '/reconciliation',
-        name: 'reconciliation',
-        builder: (context, state) => const ReconciliationScreen(),
-      ),
-      GoRoute(
-        path: '/audit',
-        name: 'audit',
-        builder: (context, state) => const AuditScreen(),
-      ),
-      GoRoute(
-        path: '/ai',
-        name: 'ai',
-        builder: (context, state) => const AiChatScreen(),
       ),
       GoRoute(
         path: '/pages/new',
         name: 'pageNew',
         builder: (context, state) => const PageBuilderScreen(),
-      ),
-      GoRoute(
-        path: '/pages/:pageId/records',
-        name: 'pageRecords',
-        builder: (context, state) =>
-            RecordListScreen(pageId: state.pathParameters['pageId']!),
       ),
       GoRoute(
         path: '/pages/:pageId/columns',

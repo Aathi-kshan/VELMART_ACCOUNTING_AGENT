@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_loading_state.dart';
 import '../application/pages_providers.dart';
 import '../domain/column.dart';
 import '../domain/page.dart';
@@ -23,8 +25,11 @@ class ColumnEditorScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Columns')),
       body: schemaAsync.when(
         data: (schema) => _ColumnEditorBody(pageId: pageId, schema: schema),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('Could not load this page.\n$error')),
+        loading: () => const AppLoadingState(),
+        error: (error, _) => AppErrorState(
+          message: '$error',
+          onRetry: () => ref.invalidate(pageSchemaProvider(pageId)),
+        ),
       ),
     );
   }

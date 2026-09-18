@@ -29,6 +29,7 @@ from app.models.business import RESERVED_PAGE_KEYS
 from app.models.page import Page, PageKind
 from app.models.page_access import PageAccess
 from app.models.page_column import ColumnType, PageColumn
+from app.models.user import User, UserRole
 from app.repositories.base import get_for_company
 from app.schemas.page import CreatePageRequest, UpdatePageRequest
 from app.services.audit_service import write_audit_log
@@ -266,6 +267,7 @@ async def list_pages(session: AsyncSession, ctx: SecurityContext) -> list[Page]:
         .join(PageAccess, PageAccess.page_id == Page.id)
         .where(
             PageAccess.user_id == ctx.user_id,
+            PageAccess.can_view.is_(True),
             Page.company_id == ctx.company_id,
             Page.is_archived.is_(False),
         )
@@ -313,7 +315,7 @@ _SYSTEM_PAGES: tuple[dict[str, Any], ...] = (
     },
     {
         "key": "purchases",
-        "name": "Purchases",
+        "name": "Purchases for Cash",
         "storage_table": "purchases",
         "date_column_key": "purchase_date",
         "columns": (
@@ -592,6 +594,20 @@ async def archive_page(
     return page
 
 
+async def get_page_access(
+    session: AsyncSession, ctx: SecurityContext, page_id: uuid.UUID
+) -> list[PageAccess]:
+    """Read-back for the Owner's access editor — without this the client has
+    no way to know what's currently granted before it overwrites it with a
+    wholesale `PUT` (the bug that made grants look like they weren't
+    saving: the editor opened blank every time)."""
+    page = await get_for_company(session, Page, page_id, ctx.company_id)
+    if page is None:
+        raise NotFoundError("No such page.")
+    result = await session.execute(select(PageAccess).where(PageAccess.page_id == page_id))
+    return list(result.scalars().all())
+
+
 async def set_page_access(
     session: AsyncSession, ctx: SecurityContext, page_id: uuid.UUID, grants: list[dict[str, object]]
 ) -> list[PageAccess]:
@@ -601,6 +617,23 @@ async def set_page_access(
     page = await get_for_company(session, Page, page_id, ctx.company_id)
     if page is None:
         raise NotFoundError("No such page.")
+
+    if grants:
+        user_ids = [g["user_id"] for g in grants]
+        result = await session.execute(
+            select(User.id, User.role).where(
+                User.id.in_(user_ids), User.company_id == ctx.company_id
+            )
+        )
+        found = {row.id: row.role for row in result.all()}
+        missing = set(user_ids) - found.keys()
+        if missing:
+            raise ValidationFailedError("One or more users do not exist in this company.")
+        non_managers = [uid for uid, role in found.items() if role != UserRole.MANAGER]
+        if non_managers:
+            raise ValidationFailedError(
+                "Page access can only be granted to managers — an owner already has full access."
+            )
 
     await session.execute(delete(PageAccess).where(PageAccess.page_id == page_id))
     rows = [

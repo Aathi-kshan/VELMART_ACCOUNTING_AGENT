@@ -37,6 +37,13 @@ apps/mobile/**/GeneratedPluginRegistrant.*
 *.sql.gz
 backups/
 
+# --- design tool exports ----------------------------------------------------
+# Raw Claude Design exports are working material, not source: ~1MB of
+# artboard HTML plus duplicate copies of docs/ files and unrelated photos.
+# The authoritative design contract lives in docs/design.md, which the token
+# layer in apps/mobile/lib/core/theme/ cites by section.
+Velmart Mobile App Design System*/
+
 # --- editors / os -----------------------------------------------------------
 .DS_Store
 .idea/

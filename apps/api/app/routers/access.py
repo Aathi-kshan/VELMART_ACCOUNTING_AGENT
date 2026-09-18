@@ -17,6 +17,16 @@ from app.services import page_service
 router = APIRouter(tags=["access"])
 
 
+@router.get("/pages/{page_id}/access", response_model=list[AccessGrant])
+async def get_page_access(
+    page_id: uuid.UUID,
+    ctx: SecurityContext = Depends(require_owner),
+    session: AsyncSession = Depends(get_rls_session),
+) -> list[AccessGrant]:
+    rows = await page_service.get_page_access(session, ctx, page_id)
+    return [AccessGrant.model_validate(r) for r in rows]
+
+
 @router.put("/pages/{page_id}/access", response_model=list[AccessGrant])
 async def set_page_access(
     page_id: uuid.UUID,

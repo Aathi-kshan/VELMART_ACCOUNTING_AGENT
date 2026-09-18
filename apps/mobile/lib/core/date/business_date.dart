@@ -24,6 +24,7 @@ import 'package:intl/intl.dart';
 const Duration colomboOffset = Duration(hours: 5, minutes: 30);
 
 final DateFormat _displayDate = DateFormat('d MMM yyyy');
+final DateFormat _displayDateLong = DateFormat('d MMMM');
 final DateFormat _displayDateTime = DateFormat('d MMM yyyy, h:mm a');
 final DateFormat _wireDate = DateFormat('yyyy-MM-dd');
 
@@ -53,6 +54,12 @@ DateTime toCompanyTime(DateTime moment) => moment.toUtc().add(colomboOffset);
 String formatDate(Object? value) {
   final parsed = parseWireDate(value);
   return parsed == null ? '' : _displayDate.format(parsed);
+}
+
+/// Longer month name, no year — home/reconciliation copy: `13 September`.
+String formatDateLong(Object? value) {
+  final parsed = parseWireDate(value);
+  return parsed == null ? '' : _displayDateLong.format(parsed);
 }
 
 /// Format a `DATETIME` column value for display: `7 Sep 2026, 4:30 PM`.

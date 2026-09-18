@@ -14,7 +14,11 @@ sealed class AuthState {
 }
 
 class AuthChecking extends AuthState {
-  const AuthChecking();
+  const AuthChecking({this.loginInFlight = false});
+
+  /// True only while [AuthController.login] is in flight — startup `/me`
+  /// restore is also [AuthChecking], but must not spin the Sign in button.
+  final bool loginInFlight;
 }
 
 class AuthAuthenticated extends AuthState {
@@ -56,7 +60,7 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> login({required String email, required String password}) async {
-    state = const AuthChecking();
+    state = const AuthChecking(loginInFlight: true);
     try {
       final user = await _repository.login(email: email, password: password);
       state = AuthAuthenticated(user);

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../core/theme/app_colors.dart';
 import '../../../domain/column.dart';
 
 /// FORMULA (plan section 11.1) — computed server-side, never stored, never
@@ -19,7 +20,8 @@ class FormulaFieldRenderer extends StatelessWidget {
       enabled: false,
       decoration: InputDecoration(
         labelText: column.name,
-        border: const OutlineInputBorder(),
+        filled: true,
+        fillColor: AppColors.surfaceSubtle,
         helperText: column.description ?? 'This value is calculated, not entered',
         prefixIcon: const Icon(Icons.functions),
       ),

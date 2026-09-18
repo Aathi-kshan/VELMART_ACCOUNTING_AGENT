@@ -92,7 +92,6 @@ class _PageBuilderScreenState extends ConsumerState<PageBuilderScreen> {
               controller: _nameController,
               decoration: const InputDecoration(
                 labelText: 'Page name',
-                border: OutlineInputBorder(),
                 helperText: 'e.g. "Fuel Receipts" — becomes the table everyone sees',
               ),
               validator: (input) =>
@@ -101,15 +100,12 @@ class _PageBuilderScreenState extends ConsumerState<PageBuilderScreen> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description (optional)',
-                border: OutlineInputBorder(),
-              ),
+              decoration: const InputDecoration(labelText: 'Description (optional)'),
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<PageKind>(
               initialValue: _kind,
-              decoration: const InputDecoration(labelText: 'Kind', border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: 'Kind'),
               items: [
                 for (final kind in PageKind.values)
                   DropdownMenuItem(value: kind, child: Text(kind.label)),
@@ -140,6 +136,7 @@ class _PageBuilderScreenState extends ConsumerState<PageBuilderScreen> {
                   subtitle: Text(_columns[i].dataType.label),
                   onTap: () => _editColumn(i),
                   trailing: IconButton(
+                    tooltip: 'Remove ${_columns[i].name}',
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () => setState(() => _columns.removeAt(i)),
                   ),

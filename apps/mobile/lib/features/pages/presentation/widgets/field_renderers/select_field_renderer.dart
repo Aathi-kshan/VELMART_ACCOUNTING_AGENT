@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../core/theme/app_colors.dart';
+import '../../../../../core/theme/app_spacing.dart';
 import '../../../domain/column.dart';
 
 /// SELECT and MULTI_SELECT (plan sections 10.2, 11.4). A SELECT can be
@@ -33,14 +35,13 @@ class SelectFieldRenderer extends StatelessWidget {
           .toSet();
       return InputDecorator(
         decoration: InputDecoration(
-          labelText: column.name,
-          border: const OutlineInputBorder(),
+          labelText: column.isRequired ? '${column.name} *' : column.name,
           errorText: errorText,
           helperText: column.description,
         ),
         child: Wrap(
-          spacing: 8,
-          runSpacing: 4,
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
           children: column.options.map((option) {
             return FilterChip(
               label: Text(option),
@@ -63,28 +64,50 @@ class SelectFieldRenderer extends StatelessWidget {
     }
 
     final currentValue = value is String ? value as String : null;
-    return DropdownButtonFormField<String>(
+    return FormField<String>(
       initialValue: (currentValue != null && column.options.contains(currentValue))
           ? currentValue
           : null,
-      decoration: InputDecoration(
-        labelText: column.name,
-        border: const OutlineInputBorder(),
-        errorText: errorText,
-        helperText: isProtectedLocked
-            ? 'Change this from the record detail screen'
-            : column.description,
-        suffixIcon: isProtectedLocked ? const Icon(Icons.lock_outline) : null,
-      ),
-      items: column.options
-          .map((option) => DropdownMenuItem(value: option, child: Text(option)))
-          .toList(),
-      onChanged: enabled ? (next) => onChanged(next) : null,
       validator: (input) {
-        if (column.isRequired && input == null) {
+        if (column.isRequired && (input == null || input.isEmpty)) {
           return '${column.name} is required';
         }
         return null;
+      },
+      builder: (state) {
+        return InputDecorator(
+          decoration: InputDecoration(
+            labelText: column.isRequired ? '${column.name} *' : column.name,
+            errorText: errorText ?? state.errorText,
+            helperText: isProtectedLocked
+                ? 'Change this from the record detail screen'
+                : column.description,
+            suffixIcon: isProtectedLocked ? const Icon(Icons.lock_outline) : null,
+          ),
+          child: Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.xs,
+            children: column.options.map((option) {
+              final selected = state.value == option;
+              return ChoiceChip(
+                label: Text(option),
+                selected: selected,
+                selectedColor: AppColors.brandPrimarySoft,
+                labelStyle: TextStyle(
+                  color: selected ? AppColors.brandPrimaryDeep : AppColors.textSecondary,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                ),
+                onSelected: enabled
+                    ? (isSelected) {
+                        if (!isSelected) return;
+                        state.didChange(option);
+                        onChanged(option);
+                      }
+                    : null,
+              );
+            }).toList(),
+          ),
+        );
       },
     );
   }

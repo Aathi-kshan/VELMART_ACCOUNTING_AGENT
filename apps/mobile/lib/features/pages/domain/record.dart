@@ -92,6 +92,12 @@ enum RecordStatus {
     RecordStatus.reversed => 'Reversed',
     RecordStatus.void_ => 'Void',
   };
+
+  String get wire => switch (this) {
+    RecordStatus.active => 'ACTIVE',
+    RecordStatus.reversed => 'REVERSED',
+    RecordStatus.void_ => 'VOID',
+  };
 }
 
 // --------------------------------------------------------------------------

@@ -4,7 +4,11 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/permissions/can.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_loading_state.dart';
 import '../../../core/widgets/empty_state.dart';
+import '../../../core/widgets/refreshable.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/user.dart';
 import '../application/audit_providers.dart';
@@ -61,13 +65,14 @@ class _AuditScreenState extends ConsumerState<AuditScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.file_download_outlined),
-              tooltip: 'Export CSV',
+              tooltip: 'Export audit log',
               onPressed: _isExporting ? null : _export,
             ),
         ],
       ),
-      body: RefreshIndicator(
+      body: PullToRefresh(
         onRefresh: () => ref.read(auditLogControllerProvider.notifier).refresh(),
+        childScrolls: state.items.isNotEmpty,
         child: _body(state),
       ),
     );
@@ -75,14 +80,12 @@ class _AuditScreenState extends ConsumerState<AuditScreen> {
 
   Widget _body(AuditLogState state) {
     if (state.isLoading && state.items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppLoadingState();
     }
     if (state.error != null && state.items.isEmpty) {
-      return EmptyState(
-        icon: Icons.error_outline,
-        message: 'Could not load the audit log.\n${state.error!.detail}',
-        actionLabel: 'Retry',
-        onAction: () => ref.read(auditLogControllerProvider.notifier).refresh(),
+      return AppErrorState(
+        message: state.error!.detail,
+        onRetry: () => ref.read(auditLogControllerProvider.notifier).refresh(),
       );
     }
     if (state.items.isEmpty) {
@@ -91,6 +94,7 @@ class _AuditScreenState extends ConsumerState<AuditScreen> {
 
     final grouped = _groupByDateHeader(state.items);
     return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: grouped.length + (state.hasMore ? 1 : 0),
       itemBuilder: (context, index) {
@@ -112,12 +116,10 @@ class _AuditScreenState extends ConsumerState<AuditScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.smMd, AppSpacing.md, AppSpacing.xs),
               child: Text(
                 section.header,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+                style: Theme.of(context).textTheme.labelLarge,
               ),
             ),
             for (final entry in section.entries) _EntryTile(entry: entry),

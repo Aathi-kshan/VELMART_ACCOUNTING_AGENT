@@ -18,25 +18,30 @@ class AiRepository {
     return response.data!['id'] as String;
   });
 
-  Future<AiChatMessage> sendMessage(String sessionId, String message) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>(
-      '/ai/sessions/$sessionId/messages',
-      data: {'message': message},
-    );
-    return AiChatMessage.fromResponseJson(response.data!);
-  });
+  Future<AiChatMessage> sendMessage(String sessionId, String message) =>
+      mapApiErrors(() async {
+        final response = await dio.post<Map<String, dynamic>>(
+          '/ai/sessions/$sessionId/messages',
+          data: {'message': message},
+        );
+        return AiChatMessage.fromResponseJson(response.data!);
+      });
 
   /// Returns the proposal's new status (`"APPLIED"`) — a stale-version
   /// conflict or an expired proposal surfaces as an [ApiException] with
   /// `code` `PROPOSAL_STALE`/`PROPOSAL_EXPIRED`, for the caller to show.
   Future<String> applyProposal(String proposalId) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>('/ai/proposals/$proposalId/apply');
+    final response = await dio.post<Map<String, dynamic>>(
+      '/ai/proposals/$proposalId/apply',
+    );
     return response.data!['status'] as String;
   });
 
   /// Returns the proposal's new status (`"CANCELLED"`).
   Future<String> cancelProposal(String proposalId) => mapApiErrors(() async {
-    final response = await dio.post<Map<String, dynamic>>('/ai/proposals/$proposalId/cancel');
+    final response = await dio.post<Map<String, dynamic>>(
+      '/ai/proposals/$proposalId/cancel',
+    );
     return response.data!['status'] as String;
   });
 }

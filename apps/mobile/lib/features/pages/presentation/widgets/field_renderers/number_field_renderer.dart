@@ -31,11 +31,11 @@ class NumberFieldRenderer extends StatelessWidget {
     return TextFormField(
       initialValue: value,
       enabled: enabled,
+      textAlign: TextAlign.end,
       keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
       decoration: InputDecoration(
-        labelText: column.name,
+        labelText: column.isRequired ? '${column.name} *' : column.name,
         suffixText: _isPercent ? '%' : null,
-        border: const OutlineInputBorder(),
         errorText: errorText,
         helperText: column.description,
       ),

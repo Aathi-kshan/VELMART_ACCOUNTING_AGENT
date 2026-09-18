@@ -30,6 +30,13 @@ final pageSchemaProvider = FutureProvider.family<PageSchema, String>((ref, pageI
   return ref.watch(pageRepositoryProvider).getSchema(pageId);
 });
 
+/// The grants currently in effect for one page — hydrates the access
+/// editor so a save can never silently wipe out managers the Owner didn't
+/// mean to touch (see `access_editor_screen.dart`).
+final pageAccessProvider = FutureProvider.family<List<AccessGrant>, String>((ref, pageId) {
+  return ref.watch(pageRepositoryProvider).getAccess(pageId);
+});
+
 /// Feeds `STORE_REF` pickers and, later, a store filter.
 final storesProvider = FutureProvider<List<Store>>((ref) {
   return ref.watch(pageRepositoryProvider).listStores();

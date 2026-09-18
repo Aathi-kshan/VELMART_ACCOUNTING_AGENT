@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../data/page_repository.dart';
+import '../domain/column.dart';
 import '../domain/record.dart';
 import 'pages_providers.dart';
 
@@ -112,3 +113,53 @@ final recordListControllerProvider =
     StateNotifierProvider.family<RecordListController, RecordListState, String>((ref, pageId) {
       return RecordListController(ref.watch(pageRepositoryProvider), pageId);
     });
+
+/// Server-side count and (when the page has a currency column) sum for the
+/// list header. The client never totals rows itself.
+class RecordSummary {
+  const RecordSummary({required this.recordCount, this.sumLabel, this.sumValue});
+
+  final int recordCount;
+  final String? sumLabel;
+  final String? sumValue;
+}
+
+final recordSummaryProvider = FutureProvider.family<RecordSummary, String>((ref, pageId) async {
+  final repo = ref.watch(pageRepositoryProvider);
+  final schema = await ref.watch(pageSchemaProvider(pageId).future);
+  final filters = ref.watch(
+    recordListControllerProvider(pageId).select((state) => state.query.filters),
+  );
+
+  final count = await repo.aggregate(
+    pageId,
+    AggregateQuery(metric: AggregateMetric.count, filters: filters),
+  );
+
+  PageColumn? currency;
+  for (final column in schema.columns) {
+    if (column.dataType == ColumnType.currency) {
+      currency = column;
+      break;
+    }
+  }
+
+  String? sumValue;
+  if (currency != null) {
+    try {
+      final sum = await repo.aggregate(
+        pageId,
+        AggregateQuery(metric: AggregateMetric.sum, column: currency.key, filters: filters),
+      );
+      sumValue = sum.value;
+    } on ApiException {
+      sumValue = null;
+    }
+  }
+
+  return RecordSummary(
+    recordCount: count.recordCount,
+    sumLabel: currency?.name,
+    sumValue: sumValue,
+  );
+});

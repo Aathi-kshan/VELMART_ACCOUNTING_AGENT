@@ -55,12 +55,20 @@ void main() {
     expect(find.text('hello'), findsOneWidget);
   });
 
-  testWidgets('CURRENCY dispatches to a text field with an Rs. prefix', (tester) async {
+  testWidgets('CURRENCY dispatches to a right-aligned field with an Rs. prefix', (tester) async {
     await tester.pumpWidget(
       pumpable(column: column(dataType: ColumnType.currency), value: '5000.00'),
     );
     expect(find.byType(TextFormField), findsOneWidget);
     expect(find.text('Rs. '), findsOneWidget);
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.textAlign, TextAlign.end);
+  });
+
+  testWidgets('NUMBER is right-aligned', (tester) async {
+    await tester.pumpWidget(pumpable(column: column(dataType: ColumnType.number), value: '12'));
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.textAlign, TextAlign.end);
   });
 
   testWidgets('BOOLEAN dispatches to a switch', (tester) async {
@@ -70,7 +78,7 @@ void main() {
     expect(switchTile.value, isTrue);
   });
 
-  testWidgets('SELECT dispatches to a dropdown with the configured options', (tester) async {
+  testWidgets('SELECT dispatches to choice chips with the configured options', (tester) async {
     await tester.pumpWidget(
       pumpable(
         column: column(
@@ -80,7 +88,12 @@ void main() {
         value: 'Electricity',
       ),
     );
-    expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
+    expect(find.byType(ChoiceChip), findsNWidgets(2));
+    expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+    final electricity = tester.widget<ChoiceChip>(
+      find.ancestor(of: find.text('Electricity'), matching: find.byType(ChoiceChip)),
+    );
+    expect(electricity.selected, isTrue);
   });
 
   testWidgets('MULTI_SELECT dispatches to filter chips', (tester) async {
@@ -112,10 +125,10 @@ void main() {
         role: UserRole.manager,
       ),
     );
-    final dropdown = tester.widget<DropdownButtonFormField<String>>(
-      find.byType(DropdownButtonFormField<String>),
+    final pending = tester.widget<ChoiceChip>(
+      find.ancestor(of: find.text('PENDING'), matching: find.byType(ChoiceChip)),
     );
-    expect(dropdown.onChanged, isNull);
+    expect(pending.onSelected, isNull);
     expect(find.byIcon(Icons.lock_outline), findsOneWidget);
   });
 
@@ -134,10 +147,10 @@ void main() {
         role: UserRole.owner,
       ),
     );
-    final dropdown = tester.widget<DropdownButtonFormField<String>>(
-      find.byType(DropdownButtonFormField<String>),
+    final pending = tester.widget<ChoiceChip>(
+      find.ancestor(of: find.text('PENDING'), matching: find.byType(ChoiceChip)),
     );
-    expect(dropdown.onChanged, isNull);
+    expect(pending.onSelected, isNull);
     expect(find.byIcon(Icons.lock_outline), findsOneWidget);
   });
 

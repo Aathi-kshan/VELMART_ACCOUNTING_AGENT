@@ -141,6 +141,13 @@ class PageRepository {
 
   // --- access -------------------------------------------------------------
 
+  /// What's currently granted — the access editor reads this to pre-check
+  /// managers before it ever submits a [setAccess] wholesale replace.
+  Future<List<AccessGrant>> getAccess(String pageId) => mapApiErrors(() async {
+    final response = await dio.get<List<dynamic>>('/pages/$pageId/access');
+    return response.data!.cast<Map<String, dynamic>>().map(AccessGrant.fromJson).toList();
+  });
+
   Future<List<AccessGrant>> setAccess(String pageId, List<AccessGrant> grants) =>
       mapApiErrors(() async {
         final response = await dio.put<List<dynamic>>(
@@ -308,5 +315,40 @@ class PageRepository {
   Future<List<User>> listUsers() => mapApiErrors(() async {
     final response = await dio.get<List<dynamic>>('/users');
     return response.data!.cast<Map<String, dynamic>>().map(User.fromJson).toList();
+  });
+
+  Future<User> createUser({
+    required String email,
+    required String password,
+    required String fullName,
+    required UserRole role,
+  }) => mapApiErrors(() async {
+    final response = await dio.post<Map<String, dynamic>>(
+      '/users',
+      data: {
+        'email': email,
+        'password': password,
+        'full_name': fullName,
+        'role': role == UserRole.owner ? 'OWNER' : 'MANAGER',
+      },
+    );
+    return User.fromJson(response.data!);
+  });
+
+  Future<User> updateUser(
+    String userId, {
+    String? fullName,
+    UserRole? role,
+    bool? isActive,
+  }) => mapApiErrors(() async {
+    final response = await dio.patch<Map<String, dynamic>>(
+      '/users/$userId',
+      data: {
+        if (fullName != null) 'full_name': fullName,
+        if (role != null) 'role': role == UserRole.owner ? 'OWNER' : 'MANAGER',
+        if (isActive != null) 'is_active': isActive,
+      },
+    );
+    return User.fromJson(response.data!);
   });
 }

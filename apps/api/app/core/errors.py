@@ -105,6 +105,18 @@ class SystemPageImmutableError(AppError):
     title = "System page is immutable"
 
 
+class EmailAlreadyExistsError(AppError):
+    """`users.company_id + email` is UNIQUE (CITEXT, so case-insensitive).
+    Raised by `user_service.create_user` both from an explicit pre-check and
+    from catching the constraint violation itself, so a race between two
+    simultaneous requests for the same email still ends in exactly one 201
+    and one clean 409 — never a raw 500 from an uncaught IntegrityError."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "EMAIL_ALREADY_EXISTS"
+    title = "Email already exists"
+
+
 class ColumnKeyImmutableError(AppError):
     """plan section 10.3 — `key` never changes; only `name` does."""
 

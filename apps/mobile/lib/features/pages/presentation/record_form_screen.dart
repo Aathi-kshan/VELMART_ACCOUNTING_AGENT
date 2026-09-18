@@ -4,6 +4,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/date/business_date.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/adaptive_scaffold.dart';
+import '../../../core/widgets/app_conflict_state.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_loading_state.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/user.dart';
 import '../application/pages_providers.dart';
@@ -82,12 +88,12 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
 
   Widget _loadingScaffold(String title) => Scaffold(
     appBar: AppBar(title: Text(title)),
-    body: const Center(child: CircularProgressIndicator()),
+    body: const AppLoadingState(),
   );
 
   Widget _errorScaffold(String title, Object error) => Scaffold(
     appBar: AppBar(title: Text(title)),
-    body: Center(child: Text('Could not load this form.\n$error')),
+    body: AppErrorState(message: '$error'),
   );
 
   void _initializeOnce(PageSchema schema, PageRecord? record) {
@@ -106,69 +112,130 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
     }
   }
 
-  Widget _scaffold(BuildContext context, PageSchema schema, PageRecord? record) {
+  Widget _scaffold(
+    BuildContext context,
+    PageSchema schema,
+    PageRecord? record,
+  ) {
     _initializeOnce(schema, record);
     final authState = ref.watch(authControllerProvider);
-    final role = authState is AuthAuthenticated ? authState.user.role : UserRole.manager;
+    final role = authState is AuthAuthenticated
+        ? authState.user.role
+        : UserRole.manager;
     final showStorePicker = schema.page.storeColumnKey == null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.isEdit ? 'Edit ${schema.page.name}' : schema.page.name)),
+      appBar: AppBar(
+        title: Text(
+          widget.isEdit ? 'Edit ${schema.page.name}' : schema.page.name,
+        ),
+      ),
       body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (_generalError != null) ...[
-                Card(
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(_generalError!),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth:
+                  AdaptiveScaffold.isCompact(MediaQuery.sizeOf(context).width)
+                  ? double.infinity
+                  : 720,
+            ),
+            child: Column(
+              children: [
+                Expanded(
+                  child: Form(
+                    key: _formKey,
+                    child: ListView(
+                      key: ValueKey(
+                        'record-fields-${record?.id}-${_version ?? 0}',
+                      ),
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      children: [
+                        if (_generalError != null) ...[
+                          Card(
+                            color: AppColors.errorSoft,
+                            child: Padding(
+                              padding: const EdgeInsets.all(AppSpacing.smMd),
+                              child: Text(
+                                _generalError!,
+                                style: Theme.of(context).textTheme.bodyLarge
+                                    ?.copyWith(color: AppColors.error),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                        ],
+                        _OccurredAtField(
+                          value: _occurredAt,
+                          onChanged: (next) =>
+                              setState(() => _occurredAt = next),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        if (showStorePicker) ...[
+                          _StorePicker(
+                            storeId: _storeId,
+                            onChanged: (next) =>
+                                setState(() => _storeId = next),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                        ],
+                        for (final column in schema.columns) ...[
+                          FieldRenderer(
+                            column: column,
+                            value: _values[column.key],
+                            role: role,
+                            enabled: !schema.generatedColumns.contains(
+                              column.key,
+                            ),
+                            errorText: _fieldErrors[column.key],
+                            onChanged: (next) =>
+                                setState(() => _values[column.key] = next),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 16),
-              ],
-              _OccurredAtField(
-                value: _occurredAt,
-                onChanged: (next) => setState(() => _occurredAt = next),
-              ),
-              const SizedBox(height: 16),
-              if (showStorePicker) ...[
-                _StorePicker(
-                  storeId: _storeId,
-                  onChanged: (next) => setState(() => _storeId = next),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.smMd,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _isSubmitting ? null : () => context.pop(),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.smMd),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => _submit(schema, record),
+                          child: _isSubmitting
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('Save'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 16),
               ],
-              for (final column in schema.columns) ...[
-                FieldRenderer(
-                  column: column,
-                  value: _values[column.key],
-                  role: role,
-                  // A generated column (e.g. daily_revenue.total_revenue) is
-                  // computed by the database, never accepted on write — same
-                  // read-only treatment FORMULA already gets, just keyed by
-                  // column rather than by type.
-                  enabled: !schema.generatedColumns.contains(column.key),
-                  errorText: _fieldErrors[column.key],
-                  onChanged: (next) => setState(() => _values[column.key] = next),
-                ),
-                const SizedBox(height: 16),
-              ],
-              const SizedBox(height: 8),
-              FilledButton(
-                onPressed: _isSubmitting ? null : () => _submit(schema, record),
-                child: _isSubmitting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(widget.isEdit ? 'Save changes' : 'Add record'),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -184,8 +251,6 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
       _generalError = null;
     });
 
-    // Only writable, non-empty fields are sent — a FORMULA/ATTACHMENT value
-    // (if somehow present from a previous load) is never resubmitted.
     final data = <String, Object?>{
       for (final column in schema.writableColumns)
         if (_values.containsKey(column.key)) column.key: _values[column.key],
@@ -210,6 +275,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
         );
       }
       ref.read(recordListControllerProvider(schema.page.id).notifier).refresh();
+      ref.invalidate(recordSummaryProvider(schema.page.id));
       if (mounted) context.pop();
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -230,33 +296,24 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
 
   Future<void> _handleVersionConflict(ApiException e) async {
     if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('This record changed'),
-        content: Text(
-          'Someone else updated this record while you were editing it '
-          '(now at version ${e.currentVersion ?? '?'}). Reload to see the '
-          'latest values before saving again.',
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () {
-              context.pop();
-              if (widget.recordId != null) {
-                ref.invalidate(_recordProvider(widget.recordId!));
-                setState(() => _initialized = false);
-              }
-            },
-            child: const Text('Reload'),
-          ),
-        ],
-      ),
+    await AppConflictState.presentDialog(
+      context,
+      onReload: () {
+        if (widget.recordId == null) return;
+        ref.invalidate(_recordProvider(widget.recordId!));
+        setState(() {
+          _initialized = false;
+          _values.clear();
+        });
+      },
     );
   }
 }
 
-final _recordProvider = FutureProvider.family<PageRecord, String>((ref, recordId) {
+final _recordProvider = FutureProvider.family<PageRecord, String>((
+  ref,
+  recordId,
+) {
   return ref.watch(pageRepositoryProvider).getRecord(recordId);
 });
 
@@ -275,10 +332,15 @@ class _OccurredAtField extends StatelessWidget {
     );
     if (date == null || !context.mounted) return;
 
-    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(value));
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(value),
+    );
     if (time == null) return;
 
-    onChanged(DateTime(date.year, date.month, date.day, time.hour, time.minute));
+    onChanged(
+      DateTime(date.year, date.month, date.day, time.hour, time.minute),
+    );
   }
 
   @override
@@ -288,8 +350,7 @@ class _OccurredAtField extends StatelessWidget {
       readOnly: true,
       initialValue: formatDateTime(toWireDateTime(value)),
       decoration: const InputDecoration(
-        labelText: 'When did this happen?',
-        border: OutlineInputBorder(),
+        labelText: 'When did this happen? *',
         suffixIcon: Icon(Icons.event),
       ),
       onTap: () => _pick(context),
@@ -312,10 +373,7 @@ class _StorePicker extends ConsumerWidget {
             if (stores.isEmpty) return const SizedBox.shrink();
             return DropdownButtonFormField<String>(
               initialValue: stores.any((s) => s.id == storeId) ? storeId : null,
-              decoration: const InputDecoration(
-                labelText: 'Store',
-                border: OutlineInputBorder(),
-              ),
+              decoration: const InputDecoration(labelText: 'Store'),
               items: [
                 const DropdownMenuItem(value: null, child: Text('(none)')),
                 for (final store in stores)

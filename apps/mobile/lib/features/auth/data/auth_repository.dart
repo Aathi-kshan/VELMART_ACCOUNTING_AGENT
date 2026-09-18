@@ -44,6 +44,12 @@ class AuthRepository {
   }
 
   Future<User> fetchMe() async {
+    // No stored access token means there is no session to restore. Hitting
+    // GET /me without a Bearer header always 401s and only pollutes the
+    // console — the interceptor has nothing to attach or refresh.
+    if (await secureStore.accessToken == null) {
+      throw const AuthException('Not signed in');
+    }
     final response = await dio.get<Map<String, dynamic>>('/me');
     return User.fromJson(response.data!);
   }

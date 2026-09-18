@@ -40,17 +40,30 @@ Widget _pumpableFor(UserRole role) {
 }
 
 void main() {
-  testWidgets('an Owner sees the AI entry point', (tester) async {
+  testWidgets('More does not host AI — it is an Owner tab, not a More item', (tester) async {
     await tester.pumpWidget(_pumpableFor(UserRole.owner));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ask about your business'), findsOneWidget);
+    expect(find.text('Ask about your business'), findsNothing);
+    expect(find.text('Reconciliation'), findsOneWidget);
+    expect(find.text('Audit log'), findsOneWidget);
+    expect(find.text('Owner'), findsOneWidget);
+    expect(find.text('LKR'), findsOneWidget);
+    expect(find.text('Asia/Colombo'), findsOneWidget);
+    expect(find.text(r'$3.00'), findsOneWidget);
+    expect(find.text('Users'), findsOneWidget);
+    expect(find.text('Create managers and change roles'), findsOneWidget);
   });
 
-  testWidgets('a Manager has no AI entry point at all', (tester) async {
+  testWidgets('a Manager has no AI entry point on More', (tester) async {
     await tester.pumpWidget(_pumpableFor(UserRole.manager));
     await tester.pumpAndSettle();
 
     expect(find.text('Ask about your business'), findsNothing);
+    expect(find.text('Reconciliation'), findsOneWidget);
+    expect(find.text(r'$3.00'), findsNothing);
+    expect(find.text('Assistant daily limit'), findsNothing);
+    expect(find.text('Users'), findsNothing);
+    expect(find.text('Create managers and change roles'), findsNothing);
   });
 }

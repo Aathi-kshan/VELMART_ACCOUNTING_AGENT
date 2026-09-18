@@ -32,6 +32,12 @@ void main() {
     });
   });
 
+  group('formatDateLong', () {
+    test('renders day and full month, no year', () {
+      expect(formatDateLong('2026-09-13'), '13 September');
+    });
+  });
+
   group('toWireDate / toWireDateTime round trip', () {
     test('toWireDate produces yyyy-MM-dd', () {
       final date = DateTime(2026, 9, 7);

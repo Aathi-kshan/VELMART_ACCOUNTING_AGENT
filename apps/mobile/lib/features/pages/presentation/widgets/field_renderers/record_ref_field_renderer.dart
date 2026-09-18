@@ -173,7 +173,7 @@ class _Picker extends StatelessWidget {
       initialValue: options.containsKey(value) ? value : null,
       decoration: InputDecoration(
         labelText: column.name,
-        border: const OutlineInputBorder(),
+
         errorText: errorText,
         helperText: column.description,
       ),
@@ -225,7 +225,7 @@ class _ReadOnlyIdField extends StatelessWidget {
       enabled: false,
       decoration: InputDecoration(
         labelText: column.name,
-        border: const OutlineInputBorder(),
+
         helperText: 'Only the Owner can browse this list',
       ),
     );

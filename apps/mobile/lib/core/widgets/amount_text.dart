@@ -21,7 +21,10 @@ class AmountText extends StatelessWidget {
     final money = _resolve(value);
     if (money == null) return const SizedBox.shrink();
 
-    final baseStyle = style ?? DefaultTextStyle.of(context).style;
+    final baseStyle = style ??
+        DefaultTextStyle.of(context).style.copyWith(
+          fontFeatures: const [FontFeature.tabularFigures()],
+        );
     final color = colorByValue && money.isNegative
         ? Theme.of(context).colorScheme.error
         : baseStyle.color;

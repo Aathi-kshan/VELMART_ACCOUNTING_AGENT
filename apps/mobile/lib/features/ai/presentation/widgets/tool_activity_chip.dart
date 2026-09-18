@@ -13,11 +13,29 @@ class ToolActivityChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Chip(
-      avatar: const Icon(Icons.bolt, size: 16),
-      label: Text('${toolCall.tool.replaceAll('_', ' ')} · ${toolCall.durationMs}ms'),
+      avatar: const Icon(Icons.search, size: 16),
+      label: Text(_humanToolName(toolCall.tool)),
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       padding: const EdgeInsets.symmetric(horizontal: 4),
     );
   }
+}
+
+String _humanToolName(String tool) {
+  return switch (tool) {
+    'list_pages' => 'Looking at your tables',
+    'get_page_schema' => 'Checking table structure',
+    'get_column_values' => 'Checking values',
+    'query_records' => 'Reading records',
+    'search_records' => 'Searching records',
+    'filter_records' => 'Filtering records',
+    'sort_records' => 'Sorting records',
+    'aggregate_records' => 'Adding up figures',
+    'calculate_formula' => 'Calculating',
+    'search_entities' => 'Looking up a name',
+    'propose_update' => 'Preparing an update',
+    'propose_status_change' => 'Preparing a status change',
+    _ => tool.replaceAll('_', ' '),
+  };
 }

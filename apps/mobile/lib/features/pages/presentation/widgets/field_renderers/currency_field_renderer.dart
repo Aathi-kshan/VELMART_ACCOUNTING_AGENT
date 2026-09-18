@@ -28,11 +28,11 @@ class CurrencyFieldRenderer extends StatelessWidget {
     return TextFormField(
       initialValue: value,
       enabled: enabled,
+      textAlign: TextAlign.end,
       keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
       decoration: InputDecoration(
-        labelText: column.name,
+        labelText: column.isRequired ? '${column.name} *' : column.name,
         prefixText: 'Rs. ',
-        border: const OutlineInputBorder(),
         errorText: errorText,
         helperText: column.description,
       ),

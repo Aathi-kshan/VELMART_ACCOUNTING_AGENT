@@ -66,8 +66,7 @@ class DateFieldRenderer extends StatelessWidget {
       enabled: enabled,
       initialValue: _displayText(),
       decoration: InputDecoration(
-        labelText: column.name,
-        border: const OutlineInputBorder(),
+        labelText: column.isRequired ? '${column.name} *' : column.name,
         errorText: errorText,
         helperText: column.description,
         suffixIcon: Icon(_isDateTime ? Icons.event : Icons.calendar_today),

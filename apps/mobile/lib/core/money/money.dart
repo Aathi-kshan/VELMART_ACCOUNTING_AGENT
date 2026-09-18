@@ -63,7 +63,9 @@ class Money {
     return '$sign$whole.${fraction.toString().padLeft(2, '0')}';
   }
 
-  /// A locale-agnostic display string, e.g. `Rs. 35,000.00`.
+  /// A locale-agnostic display string. Whole rupees omit cents
+  /// (`Rs. 250,000`); any non-zero cents stay visible (`Rs. 250,000.50`)
+  /// so the value is never rounded for display (design.md §1.2 / §5.4).
   String format({String currencySymbol = 'Rs.'}) {
     final negative = minorUnits < 0;
     final abs = minorUnits.abs();
@@ -80,6 +82,9 @@ class Money {
     }
 
     final sign = negative ? '-' : '';
+    if (fraction == 0) {
+      return '$sign$currencySymbol ${buffer.toString()}';
+    }
     return '$sign$currencySymbol ${buffer.toString()}.${fraction.toString().padLeft(2, '0')}';
   }
 

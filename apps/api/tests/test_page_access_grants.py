@@ -13,6 +13,8 @@ from __future__ import annotations
 import uuid
 
 from httpx import AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _login(client: AsyncClient, email: str, password: str) -> str:
@@ -233,3 +235,123 @@ class TestPutAccessReplacesWholesale:
             f"/pages/{page_id}/access", json={"grants": []}, headers=manager_headers
         )
         assert resp.status_code == 403
+
+
+class TestGetAccessReadBack:
+    """`GET /pages/{id}/access` — without this the Owner's access editor has
+    no way to show what's currently granted before it overwrites it with
+    the next `PUT` (the bug that made grants look like they weren't
+    saving)."""
+
+    async def test_get_reflects_a_prior_put(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        manager: uuid.UUID, manager_password: str,
+    ) -> None:
+        owner_headers = await _owner_headers(client, owner_password)
+        page_id = await _create_page(client, owner_headers)
+        await _grant(client, owner_headers, page_id, manager, can_view=True, can_create=False)
+
+        resp = await client.get(f"/pages/{page_id}/access", headers=owner_headers)
+        assert resp.status_code == 200, resp.text
+        grants = resp.json()
+        assert len(grants) == 1
+        assert grants[0]["user_id"] == str(manager)
+        assert grants[0]["can_view"] is True
+        assert grants[0]["can_create"] is False
+
+    async def test_get_is_empty_before_any_grant(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+    ) -> None:
+        owner_headers = await _owner_headers(client, owner_password)
+        page_id = await _create_page(client, owner_headers)
+
+        resp = await client.get(f"/pages/{page_id}/access", headers=owner_headers)
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_get_access_is_owner_only(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        manager: uuid.UUID, manager_password: str,
+    ) -> None:
+        owner_headers = await _owner_headers(client, owner_password)
+        page_id = await _create_page(client, owner_headers)
+
+        manager_headers = await _manager_headers(client, manager_password)
+        resp = await client.get(f"/pages/{page_id}/access", headers=manager_headers)
+        assert resp.status_code == 403
+
+
+class TestSetAccessValidatesGrantees:
+    """A submitted `user_id` must be a real manager in this company — never
+    trust the client's id blindly, and never let a foreign-key violation
+    surface as a raw 500."""
+
+    async def test_granting_to_a_nonexistent_user_is_422(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+    ) -> None:
+        owner_headers = await _owner_headers(client, owner_password)
+        page_id = await _create_page(client, owner_headers)
+
+        resp = await client.put(
+            f"/pages/{page_id}/access",
+            json={"grants": [{"user_id": str(uuid.uuid4()), "can_view": True, "can_create": True}]},
+            headers=owner_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "VALIDATION_FAILED"
+
+    async def test_granting_to_a_foreign_companys_user_is_422(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
+    ) -> None:
+        owner_headers = await _owner_headers(client, owner_password)
+        page_id = await _create_page(client, owner_headers)
+
+        other_company = uuid.uuid4()
+        await session.execute(
+            text("INSERT INTO companies (id, name) VALUES (:id, 'Other Supermarket')"),
+            {"id": str(other_company)},
+        )
+        other_user = uuid.uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO users (id, company_id, email, full_name, password_hash, role) "
+                "VALUES (:id, :cid, 'foreign@other.lk', 'Foreign', 'x', 'MANAGER')"
+            ),
+            {"id": str(other_user), "cid": str(other_company)},
+        )
+        await session.commit()
+
+        resp = await client.put(
+            f"/pages/{page_id}/access",
+            json={"grants": [{"user_id": str(other_user), "can_view": True, "can_create": True}]},
+            headers=owner_headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    async def test_granting_to_an_owner_is_422(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
+    ) -> None:
+        owner_headers = await _owner_headers(client, owner_password)
+        page_id = await _create_page(client, owner_headers)
+
+        resp = await client.put(
+            f"/pages/{page_id}/access",
+            json={"grants": [{"user_id": str(owner), "can_view": True, "can_create": True}]},
+            headers=owner_headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+
+class TestListPagesRespectsCanView:
+    async def test_a_can_view_false_page_is_absent_from_the_managers_list(
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str,
+        manager: uuid.UUID, manager_password: str,
+    ) -> None:
+        owner_headers = await _owner_headers(client, owner_password)
+        page_id = await _create_page(client, owner_headers)
+        await _grant(client, owner_headers, page_id, manager, can_view=False, can_create=True)
+
+        manager_headers = await _manager_headers(client, manager_password)
+        resp = await client.get("/pages", headers=manager_headers)
+        assert resp.status_code == 200
+        assert resp.json() == []

@@ -5,7 +5,14 @@ import 'package:go_router/go_router.dart';
 import '../../../core/date/business_date.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/permissions/can.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_radii.dart';
+import '../../../core/theme/app_spacing.dart';
 import '../../../core/widgets/amount_text.dart';
+import '../../../core/widgets/app_card.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_loading_state.dart';
+import '../../../core/widgets/app_status_chip.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/user.dart';
 import '../application/pages_providers.dart';
@@ -25,9 +32,20 @@ class RecordDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final recordAsync = ref.watch(_recordProvider(recordId));
+    final title = recordAsync.whenOrNull(
+      data: (record) => ref
+          .watch(pageSchemaProvider(record.pageId))
+          .whenOrNull(
+            data: (schema) {
+              final display = schema.displayColumn;
+              if (display == null) return null;
+              return record.valueFor(display)?.toString();
+            },
+          ),
+    );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Record')),
+      appBar: AppBar(title: Text(title ?? 'Record')),
       body: recordAsync.when(
         data: (record) => ref
             .watch(pageSchemaProvider(record.pageId))
@@ -41,17 +59,20 @@ class RecordDetailScreen extends ConsumerWidget {
                 ),
                 onDeleted: () => context.pop(),
               ),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, _) => Center(child: Text('Could not load this page.\n$error')),
+              loading: () => const AppLoadingState(),
+              error: (error, _) => AppErrorState(message: '$error'),
             ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('Could not load this record.\n$error')),
+        loading: () => const AppLoadingState(),
+        error: (error, _) => AppErrorState(message: '$error'),
       ),
     );
   }
 }
 
-final _recordProvider = FutureProvider.family<PageRecord, String>((ref, recordId) {
+final _recordProvider = FutureProvider.family<PageRecord, String>((
+  ref,
+  recordId,
+) {
   return ref.watch(pageRepositoryProvider).getRecord(recordId);
 });
 
@@ -75,40 +96,66 @@ class RecordDetailView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authControllerProvider);
-    final role = authState is AuthAuthenticated ? authState.user.role : UserRole.manager;
+    final role = authState is AuthAuthenticated
+        ? authState.user.role
+        : UserRole.manager;
+
+    // Every field in one bordered card, rows divided by a hairline — the
+    // mockup's own field-list layout, replacing what used to be a flat
+    // `ListView` of separately-spaced fields.
+    final fields = <Widget>[
+      _DetailRow(
+        label: 'Business date',
+        child: Text(
+          formatDate(record.businessDate),
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+      ),
+      for (final column in schema.columns)
+        _FieldValue(column: column, record: record),
+    ];
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.md),
       children: [
-        if (record.needsReview)
-          Card(
-            color: Theme.of(context).colorScheme.errorContainer,
-            child: const ListTile(
-              leading: Icon(Icons.flag_outlined),
-              title: Text('Needs review'),
-              subtitle: Text('A validation rule flagged this record for a second look.'),
-            ),
+        Row(
+          children: [
+            AppStatusChip.recordStatus(record.status.wire),
+            if (record.needsReview) ...[
+              const SizedBox(width: AppSpacing.sm),
+              const AppStatusChip(
+                label: 'Needs review',
+                tone: AppStatusTone.warning,
+                icon: Icons.flag_outlined,
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        AppCard(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              for (var i = 0; i < fields.length; i++) ...[
+                Padding(
+                  padding: const EdgeInsets.all(AppSpacing.cardPaddingDense),
+                  child: fields[i],
+                ),
+                if (i < fields.length - 1)
+                  const Divider(height: 1, color: AppColors.hairline),
+              ],
+            ],
           ),
-        Text('Business date', style: Theme.of(context).textTheme.labelMedium),
-        Text(formatDate(record.businessDate), style: Theme.of(context).textTheme.bodyLarge),
-        const SizedBox(height: 16),
-        for (final column in schema.columns) ...[
-          _FieldValue(column: column, record: record),
-          const SizedBox(height: 16),
-        ],
-        // The only way a protected value ever changes (plan section 11.4) —
-        // not through the generic Edit form above, which never submits a
-        // protected column's value at all (see `PageSchema.writableColumns`).
+        ),
         if (canSetProtectedField(role))
           for (final column in schema.columns.where((c) => c.isProtected)) ...[
-            OutlinedButton.icon(
-              onPressed: () => _changeProtectedField(context, ref, column),
-              icon: const Icon(Icons.edit_note),
-              label: Text('Change ${column.name}'),
+            const SizedBox(height: AppSpacing.md),
+            _ChangeStatusCard(
+              column: column,
+              onTap: () => _changeProtectedField(context, ref, column),
             ),
-            const SizedBox(height: 8),
           ],
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.md),
         if (canEditRecord(role) || canDeleteRecord(role))
           Row(
             children: [
@@ -120,61 +167,35 @@ class RecordDetailView extends ConsumerWidget {
                     label: const Text('Edit'),
                   ),
                 ),
-              if (canEditRecord(role) && canDeleteRecord(role)) const SizedBox(width: 12),
+              if (canEditRecord(role) && canDeleteRecord(role))
+                const SizedBox(width: AppSpacing.smMd),
               if (canDeleteRecord(role))
                 Expanded(
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.error,
+                      foregroundColor: AppColors.error,
                     ),
-                    onPressed: () => _confirmDelete(context, ref),
+                    onPressed: () => confirmAndDeleteRecord(
+                      context,
+                      ref,
+                      record,
+                      onDeleted: onDeleted,
+                    ),
                     icon: const Icon(Icons.delete_outline),
                     label: const Text('Delete'),
                   ),
                 ),
             ],
           ),
+        const SizedBox(height: AppSpacing.md),
+        Text(
+          'Every change to this record is recorded in the audit log with your name and the time.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelMedium
+              ?.copyWith(color: AppColors.textTertiary),
+        ),
       ],
     );
-  }
-
-  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
-    final reasonController = TextEditingController();
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete this record?'),
-        content: TextField(
-          controller: reasonController,
-          decoration: const InputDecoration(
-            labelText: 'Reason (required)',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(onPressed: () => context.pop(), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => context.pop(reasonController.text.trim()),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (reason == null || reason.isEmpty || !context.mounted) return;
-
-    try {
-      await ref.read(pageRepositoryProvider).deleteRecord(record.id, reason: reason);
-      // Unlike create/update (`record_form_screen.dart`'s `_submit`), nothing
-      // else re-fetches the page's record list after a delete — without this,
-      // the deleted row stays visible until some other refresh happens,
-      // making a successful delete look like it silently did nothing.
-      ref.read(recordListControllerProvider(record.pageId).notifier).refresh();
-      onDeleted?.call();
-    } on ApiException catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.detail)));
-    }
   }
 
   Future<void> _changeProtectedField(
@@ -183,22 +204,45 @@ class RecordDetailView extends ConsumerWidget {
     PageColumn column,
   ) async {
     final current = record.valueFor(column) as String?;
-    final selected = await showDialog<String>(
+    final selected = await showModalBottomSheet<String>(
       context: context,
-      builder: (context) => SimpleDialog(
-        title: Text('Change ${column.name}'),
-        children: [
-          for (final option in column.options)
-            RadioListTile<String>(
-              title: Text(option),
-              value: option,
-              // ignore: deprecated_member_use
-              groupValue: current,
-              // ignore: deprecated_member_use
-              onChanged: (value) => Navigator.of(context).pop(value),
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              0,
+              AppSpacing.md,
+              AppSpacing.md,
             ),
-        ],
-      ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Change ${column.name}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                for (final option in column.options)
+                  ListTile(
+                    title: Text(option),
+                    selected: option == current,
+                    selectedTileColor: AppColors.brandPrimarySoft,
+                    trailing: option == current
+                        ? const Icon(
+                            Icons.check,
+                            color: AppColors.brandPrimaryDeep,
+                          )
+                        : null,
+                    onTap: () => Navigator.of(context).pop(option),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
     if (selected == null || selected == current || !context.mounted) return;
 
@@ -214,8 +258,139 @@ class RecordDetailView extends ConsumerWidget {
       ref.invalidate(_recordProvider(record.id));
     } on ApiException catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.detail)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.detail)));
     }
+  }
+}
+
+/// Shared by the detail screen and the desktop record table.
+Future<bool> confirmAndDeleteRecord(
+  BuildContext context,
+  WidgetRef ref,
+  PageRecord record, {
+  VoidCallback? onDeleted,
+}) async {
+  var typed = '';
+  final reason = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Void this record?'),
+      content: TextField(
+        decoration: const InputDecoration(labelText: 'Reason (required)'),
+        autofocus: true,
+        onChanged: (value) => typed = value,
+      ),
+      actions: [
+        TextButton(onPressed: () => context.pop(), child: const Text('Cancel')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+          onPressed: () => context.pop(typed.trim()),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (reason == null || reason.isEmpty || !context.mounted) return false;
+
+  try {
+    await ref
+        .read(pageRepositoryProvider)
+        .deleteRecord(record.id, reason: reason);
+    ref.read(recordListControllerProvider(record.pageId).notifier).refresh();
+    ref.invalidate(recordSummaryProvider(record.pageId));
+    onDeleted?.call();
+    return true;
+  } on ApiException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.detail)));
+    }
+    return false;
+  }
+}
+
+/// One label+value row inside the field-list card — the same shape
+/// `_FieldValue` renders for a schema column, reused for the fixed
+/// "Business date" row above it so every row in the card looks identical.
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        const SizedBox(height: AppSpacing.xs),
+        child,
+      ],
+    );
+  }
+}
+
+/// A protected column's change trigger (design.md §25.5, §32 "Protected
+/// field"): amber, with the lock explanation up front — replaces what used
+/// to be a plain `OutlinedButton` with no context about *why* this is a
+/// separate action from Edit.
+class _ChangeStatusCard extends StatelessWidget {
+  const _ChangeStatusCard({required this.column, required this.onTap});
+
+  final PageColumn column;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Material(
+      color: AppColors.warningSoft,
+      shape: RoundedRectangleBorder(
+        borderRadius: AppRadii.mdRadius,
+        side: const BorderSide(color: AppColors.warningBorder),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: AppRadii.mdRadius,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.lock_outline,
+                color: AppColors.warningText,
+                size: 20,
+              ),
+              const SizedBox(width: AppSpacing.smMd),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Change ${column.name}',
+                      style: textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      'Only an Owner can change this value.',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.textTertiary),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -240,14 +415,27 @@ class _FieldValue extends StatelessWidget {
       valueWidget = Text(formatDateTime(value), style: valueStyle);
     } else if (column.dataType == ColumnType.boolean) {
       valueWidget = Text(value == true ? 'Yes' : 'No', style: valueStyle);
-    } else if (column.dataType == ColumnType.multiSelect) {
-      final items = (value is List ? value.cast<String>() : const <String>[]);
-      valueWidget = Wrap(
-        spacing: 4,
-        children: items.map((item) => Chip(label: Text(item))).toList(),
-      );
+    } else if (column.dataType == ColumnType.select ||
+        column.dataType == ColumnType.multiSelect) {
+      final items = value is List
+          ? value.cast<String>()
+          : (value == null ? const <String>[] : <String>['$value']);
+      valueWidget = items.isEmpty
+          ? Text(
+              '—',
+              style: valueStyle?.copyWith(color: Theme.of(context).hintColor),
+            )
+          : Wrap(
+              spacing: AppSpacing.xs,
+              children: items
+                  .map((item) => AppStatusChip.recordStatus(item))
+                  .toList(),
+            );
     } else if (value == null || (value is String && value.isEmpty)) {
-      valueWidget = Text('—', style: valueStyle?.copyWith(color: Theme.of(context).hintColor));
+      valueWidget = Text(
+        '—',
+        style: valueStyle?.copyWith(color: Theme.of(context).hintColor),
+      );
     } else {
       valueWidget = Text('$value', style: valueStyle);
     }

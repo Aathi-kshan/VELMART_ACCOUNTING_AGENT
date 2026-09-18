@@ -41,7 +41,10 @@ class AiToolCall {
   const AiToolCall({required this.tool, required this.durationMs});
 
   factory AiToolCall.fromJson(Map<String, dynamic> json) {
-    return AiToolCall(tool: json['tool'] as String, durationMs: json['duration_ms'] as int);
+    return AiToolCall(
+      tool: json['tool'] as String,
+      durationMs: json['duration_ms'] as int,
+    );
   }
 
   final String tool;
@@ -52,7 +55,11 @@ class AiToolCall {
 /// as whatever wire type the column already uses (a money string, a plain
 /// number, a bool), so this stays `dynamic` and only formats for display.
 class AiProposalChange {
-  const AiProposalChange({required this.column, required this.before, required this.after});
+  const AiProposalChange({
+    required this.column,
+    required this.before,
+    required this.after,
+  });
 
   factory AiProposalChange.fromJson(Map<String, dynamic> json) {
     return AiProposalChange(

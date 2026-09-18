@@ -14,10 +14,11 @@ final aiRepositoryProvider = Provider<AiRepository>((ref) {
 /// `FutureProvider`, since sending a message appends to an existing
 /// conversation rather than recomputing it (same reasoning as
 /// `AuditLogController`'s "load more").
-final aiChatControllerProvider = StateNotifierProvider<AiChatController, AiChatState>((ref) {
-  final repository = ref.watch(aiRepositoryProvider);
-  return AiChatController(repository);
-});
+final aiChatControllerProvider =
+    StateNotifierProvider<AiChatController, AiChatState>((ref) {
+      final repository = ref.watch(aiRepositoryProvider);
+      return AiChatController(repository);
+    });
 
 class AiChatState {
   const AiChatState({
@@ -36,9 +37,12 @@ class AiChatState {
   final bool isSending;
   final ApiException? error;
 
-  /// proposal id -> its resolved status (`"APPLIED"`/`"CANCELLED"`), once
-  /// the Owner has acted on it. A proposal with no entry here is still
-  /// `PENDING` from this client's point of view.
+  /// proposal id -> its resolved status — `"APPLIED"`/`"CANCELLED"` when the
+  /// Owner's own action succeeded, or `"EXPIRED"`/`"STALE"` when the server
+  /// discovered (on that same UPDATE/CANCEL attempt) that the proposal's
+  /// 10-minute window passed or the target record changed underneath it.
+  /// A proposal with no entry here is still `PENDING` from this client's
+  /// point of view.
   final Map<String, String> proposalStatuses;
 
   /// proposal ids currently mid apply/cancel — lets the card show a
@@ -61,7 +65,8 @@ class AiChatState {
     isSending: isSending ?? this.isSending,
     error: clearError ? null : (error ?? this.error),
     proposalStatuses: proposalStatuses ?? this.proposalStatuses,
-    pendingProposalActions: pendingProposalActions ?? this.pendingProposalActions,
+    pendingProposalActions:
+        pendingProposalActions ?? this.pendingProposalActions,
   );
 }
 
@@ -98,21 +103,20 @@ class AiChatController extends StateNotifier<AiChatState> {
 
     try {
       final reply = await _repository.sendMessage(sessionId, trimmed);
-      state = state.copyWith(messages: [...state.messages, reply], isSending: false);
+      state = state.copyWith(
+        messages: [...state.messages, reply],
+        isSending: false,
+      );
     } on ApiException catch (e) {
       state = state.copyWith(isSending: false, error: e);
     }
   }
 
-  Future<void> applyProposal(String proposalId) => _resolveProposal(
-    proposalId,
-    (id) => _repository.applyProposal(id),
-  );
+  Future<void> applyProposal(String proposalId) =>
+      _resolveProposal(proposalId, (id) => _repository.applyProposal(id));
 
-  Future<void> cancelProposal(String proposalId) => _resolveProposal(
-    proposalId,
-    (id) => _repository.cancelProposal(id),
-  );
+  Future<void> cancelProposal(String proposalId) =>
+      _resolveProposal(proposalId, (id) => _repository.cancelProposal(id));
 
   Future<void> _resolveProposal(
     String proposalId,
@@ -127,13 +131,39 @@ class AiChatController extends StateNotifier<AiChatState> {
       final status = await action(proposalId);
       state = state.copyWith(
         proposalStatuses: {...state.proposalStatuses, proposalId: status},
-        pendingProposalActions: state.pendingProposalActions.difference({proposalId}),
+        pendingProposalActions: state.pendingProposalActions.difference({
+          proposalId,
+        }),
       );
     } on ApiException catch (e) {
-      state = state.copyWith(
-        pendingProposalActions: state.pendingProposalActions.difference({proposalId}),
-        error: e,
-      );
+      // The server discovers expiry/staleness lazily, only when the Owner
+      // actually taps UPDATE/CANCEL (`app/ai/proposals.py`'s own lazy-expiry
+      // design — no scheduler needed). Surfacing these as their own
+      // resolved statuses, not a generic `state.error`, is what lets
+      // `ProposalCard` show the specific "this update expired" / "this
+      // record changed" copy design.md calls for, instead of a raw
+      // PROPOSAL_EXPIRED/PROPOSAL_STALE code.
+      final resolved = switch (e.code) {
+        'PROPOSAL_EXPIRED' => 'EXPIRED',
+        'PROPOSAL_STALE' => 'STALE',
+        _ => null,
+      };
+      state = resolved != null
+          ? state.copyWith(
+              proposalStatuses: {
+                ...state.proposalStatuses,
+                proposalId: resolved,
+              },
+              pendingProposalActions: state.pendingProposalActions.difference({
+                proposalId,
+              }),
+            )
+          : state.copyWith(
+              pendingProposalActions: state.pendingProposalActions.difference({
+                proposalId,
+              }),
+              error: e,
+            );
     }
   }
 }

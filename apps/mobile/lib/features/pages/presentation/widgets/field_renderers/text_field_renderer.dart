@@ -31,8 +31,7 @@ class TextFieldRenderer extends StatelessWidget {
       maxLength: _isLong ? 10000 : 500,
       maxLines: _isLong ? 5 : 1,
       decoration: InputDecoration(
-        labelText: column.name,
-        border: const OutlineInputBorder(),
+        labelText: column.isRequired ? '${column.name} *' : column.name,
         errorText: errorText,
         helperText: column.description,
       ),

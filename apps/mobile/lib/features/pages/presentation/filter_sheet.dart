@@ -111,10 +111,11 @@ class _FilterSheetState extends State<_FilterSheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
                 children: [
                   Text('Filter & sort', style: Theme.of(context).textTheme.titleLarge),
-                  const Spacer(),
                   TextButton(
                     onPressed: () => setState(() {
                       _rows.clear();
@@ -135,7 +136,6 @@ class _FilterSheetState extends State<_FilterSheet> {
                       decoration: const InputDecoration(
                         labelText: 'Search',
                         prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -147,7 +147,7 @@ class _FilterSheetState extends State<_FilterSheet> {
                           Expanded(
                             child: DropdownButtonFormField<String?>(
                               initialValue: _sortColumnKey,
-                              decoration: const InputDecoration(border: OutlineInputBorder()),
+                              decoration: const InputDecoration(),
                               items: [
                                 const DropdownMenuItem(value: null, child: Text('Default order')),
                                 for (final column in widget.schema.columns)
@@ -169,10 +169,11 @@ class _FilterSheetState extends State<_FilterSheet> {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      Row(
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
                         children: [
                           Text('Filters', style: Theme.of(context).textTheme.labelLarge),
-                          const Spacer(),
                           TextButton.icon(
                             onPressed: _addRow,
                             icon: const Icon(Icons.add),
@@ -264,7 +265,11 @@ class _FilterRowEditor extends StatelessWidget {
                     },
                   ),
                 ),
-                IconButton(icon: const Icon(Icons.close), onPressed: onRemove),
+                IconButton(
+                  tooltip: 'Remove this filter',
+                  icon: const Icon(Icons.close),
+                  onPressed: onRemove,
+                ),
               ],
             ),
             DropdownButtonFormField<FilterOp>(

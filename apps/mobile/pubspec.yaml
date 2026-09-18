@@ -47,8 +47,14 @@ dependencies:
 
   cupertino_icons: ^1.0.8
 
+  # Inter is the product font (design system §5.1) — bundled via this
+  # package rather than shipping font assets ourselves.
+  google_fonts: ^6.2.1
+
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^5.0.0
   riverpod_generator: ^2.6.3
@@ -58,3 +64,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/brand/velmart-mark.jpg

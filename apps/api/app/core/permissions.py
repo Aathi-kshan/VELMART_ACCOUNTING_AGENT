@@ -77,6 +77,7 @@ PERMISSION_MATRIX: tuple[PermissionRule, ...] = (
     PermissionRule("PATCH", "/columns/{column_id}", Access.OWNER_ONLY),
     PermissionRule("DELETE", "/columns/{column_id}", Access.OWNER_ONLY),
     PermissionRule("POST", "/columns/{column_id}/narrow-dry-run", Access.OWNER_ONLY),
+    PermissionRule("GET", "/pages/{page_id}/access", Access.OWNER_ONLY),
     PermissionRule("PUT", "/pages/{page_id}/access", Access.OWNER_ONLY),
     PermissionRule("PATCH", "/records/{record_id}", Access.OWNER_ONLY),
     PermissionRule("DELETE", "/records/{record_id}", Access.OWNER_ONLY),
