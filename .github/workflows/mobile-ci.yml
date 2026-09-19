@@ -26,24 +26,15 @@ jobs:
           flutter-version: "3.47.x"
           channel: stable
 
-      - name: Skip if the client has no pubspec yet
-        id: check
-        run: |
-          if [ -f pubspec.yaml ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "No pubspec.yaml yet — apps/mobile is still a scaffold (plan section 22). Nothing to check."
-          fi
+      # The "skip if no pubspec.yaml" guard that used to live here gated
+      # every step below on the file's presence — meaning this workflow
+      # would report green having run zero checks the moment pubspec.yaml
+      # was deleted or renamed. apps/mobile has been a real Flutter app
+      # since P1; there is no scaffold state left to guard for, and a
+      # missing pubspec.yaml now fails `flutter pub get` loudly instead of
+      # skipping silently.
+      - run: flutter pub get
 
-      - name: flutter pub get
-        if: steps.check.outputs.exists == 'true'
-        run: flutter pub get
+      - run: dart analyze --fatal-infos
 
-      - name: dart analyze
-        if: steps.check.outputs.exists == 'true'
-        run: dart analyze --fatal-infos
-
-      - name: flutter test
-        if: steps.check.outputs.exists == 'true'
-        run: flutter test
+      - run: flutter test

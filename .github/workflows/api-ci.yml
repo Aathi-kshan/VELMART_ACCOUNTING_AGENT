@@ -26,6 +26,12 @@ jobs:
         with:
           enable-cache: true
 
+      # Catches a pyproject.toml dependency change that nobody re-locked —
+      # `uv sync --frozen` below happily installs a stale lock as-is, so
+      # without this a drifted lockfile ships to every environment silently.
+      - name: Verify uv.lock is up to date
+        run: uv lock --check
+
       - name: Install dependencies
         run: uv sync --frozen --all-extras
 
@@ -33,7 +39,7 @@ jobs:
         run: uv run ruff check app/ alembic/ tests/
 
       - name: Type check (mypy)
-        run: uv run mypy app/
+        run: uv run mypy app/ alembic/
 
       - name: Test (real Postgres via testcontainers)
         run: uv run pytest -q
@@ -42,3 +48,58 @@ jobs:
           # points DATABASE_URL at it; JWT_SECRET_KEY only needs to satisfy
           # the length check, never a real secret in CI.
           JWT_SECRET_KEY: ci-test-secret-key-at-least-sixty-four-bytes-long-000000
+
+  migrations:
+    runs-on: ubuntu-latest
+    # A plain Postgres service, not testcontainers: this job checks the
+    # migration *files* round-trip cleanly, which is a property of the
+    # migrations themselves and doesn't need the app's own test fixtures.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: velmart
+          POSTGRES_PASSWORD: velmart
+          POSTGRES_DB: velmart
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U velmart -d velmart"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://velmart:velmart@localhost:5432/velmart
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      # A single head is what makes `alembic upgrade head` unambiguous. Two
+      # heads (an unmerged branch) fails silently otherwise — alembic just
+      # picks one — so this is checked explicitly rather than left implicit
+      # in the upgrade step below.
+      - name: Exactly one migration head
+        run: |
+          heads="$(uv run alembic heads)"
+          echo "$heads"
+          count="$(echo "$heads" | grep -c '(head)')"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly one migration head, found $count"
+            exit 1
+          fi
+
+      # Every migration's downgrade() actually runs, not just exists — this
+      # is what would have caught the migration that broke every audit write
+      # (BUG_FIX_LOG.md #52) as a red CI check instead of 407 failing tests.
+      - name: Migration round-trip (fresh DB -> head -> base -> head)
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head

@@ -954,10 +954,57 @@ application offers no way to fix.
 
 ---
 
+## Round 8 — closing R1 (the CI gate)
+
+`FINAL_VERIFICATION_REPORT.md` flagged this as the top blocker to a release
+assessment: CI verified none of the five migrations added during this audit,
+and a stale lockfile or a dead scaffold guard could both go unnoticed.
+
+### 59. CI never gated the migrations, the lockfile, or `alembic/`'s types — R1
+
+**`.github/workflows/api-ci.yml`** gained:
+
+- `uv lock --check` before `uv sync --frozen` — the sync step trusts the lock
+  as-is, so a `pyproject.toml` dependency bump nobody re-locked would install
+  silently rather than failing the build.
+- `mypy app/ alembic/` (was `app/` only). `alembic/` was already clean; now
+  it's enforced rather than incidental.
+- A new `migrations` job: a plain Postgres 18 service (not testcontainers —
+  this checks a property of the migration files themselves, not the app's own
+  fixtures) that asserts **exactly one head**, then runs
+  `upgrade head` → `downgrade base` → `upgrade head` against a genuinely fresh
+  database. This is the check that would have turned #52 (a migration that
+  broke every audit write once the chain-head row was empty) into a red CI
+  run instead of something found by 407 failing tests.
+
+**`.github/workflows/mobile-ci.yml`** lost its "skip if no pubspec.yaml"
+guard, which gated every step behind the file's existence. `apps/mobile` has
+been a real Flutter app since P1 — there was no scaffold state left to guard
+for — and the guard's actual effect was that deleting `pubspec.yaml` would
+have made this workflow report green having run zero checks.
+
+**Verified locally before being wired in**, not just written: ran the exact
+`uv lock --check`, `mypy app/ alembic/`, single-head check, and
+upgrade→downgrade→upgrade sequence against a fresh throwaway Postgres 18
+container, matching what the new job does. All clean.
+
+**Deliberately not done in this round:** `mypy tests/` still has 41
+pre-existing errors across 16 files (unrelated to anything in this audit) and
+is not yet in the gate — see "Still open" below.
+
+---
+
 ## Still open (found, not yet fixed)
 
 Recorded here rather than dropped. Everything listed in earlier rounds as
 deferred has since been closed; this is what remains.
+
+**Tooling**
+
+- **`mypy tests/` has 41 pre-existing errors** across 16 files — mostly
+  missing parameter annotations and a couple of genuine `Iterable`/`Any`
+  typing gaps, none related to this audit. Out of scope for #59; `tests/` is
+  not yet in the CI type-check gate because of it.
 
 **Concurrency**
 

@@ -120,8 +120,8 @@ Nothing below is fixed. All of it is in `BUG_FIX_LOG.md` with detail.
 
 | # | Issue |
 |---|---|
-| R1 | **CI was never updated.** No migration gate, no `uv lock --check`, `mypy` still skips `tests/` and `alembic/`, and `mobile-ci.yml` keeps a dead "skip if no pubspec" guard that gates every step — delete `pubspec.yaml` and CI reports green having run nothing. This was in the plan and I did not do it. A migration gate would have caught the `0021` defect automatically instead of via 407 failing tests. |
-| R2 | **`mypy tests/` has 41 pre-existing errors** across 16 files, which is why `tests/` is still outside the type gate. `alembic/` is clean and can be added immediately. |
+| R1 | ~~CI was never updated~~ — **closed.** `.github/workflows/api-ci.yml` gained `uv lock --check`, `mypy app/ alembic/` (was `app/` only), and a new `migrations` job: a plain Postgres 18 service that asserts exactly one head then runs `upgrade head` → `downgrade base` → `upgrade head` on a genuinely fresh database. `mobile-ci.yml`'s dead "skip if no pubspec" guard is removed — `apps/mobile` has been a real app since P1, and the guard meant deleting `pubspec.yaml` would have reported green having run nothing. Both steps were exercised locally against a fresh container with the exact commands CI now runs before being wired in; see BUG_FIX_LOG.md #59. |
+| R2 | **`mypy tests/` has 41 pre-existing errors** across 16 files, which is why `tests/` is still outside the type gate. `alembic/` is now in the gate (R1) — it was already clean. |
 | R3 | **Backups are local-only.** `app/storage/` is an unbuilt stub, so the dump lands on a mounted volume and is never shipped off-platform. The RUNBOOK's "off-platform copy" line is now marked not-implemented rather than claimed. |
 | R4 | **The restore drill's 3s is not the RTO.** It was measured against a 458-row development database. Re-run against production-sized data before treating the 4-hour RTO as evidenced. |
 
@@ -163,19 +163,21 @@ system genuinely unsafe are fixed and proven by tests that fail without them.
 It is not ready because the things that catch the *next* defect are not in
 place:
 
-1. **CI does not gate what now matters** (R1). Five migrations were added in
-   this pass and CI verifies none of them.
+1. ~~CI does not gate what now matters~~ — **closed** (R1). The migration
+   round-trip, single-head check, and `uv lock --check` are now enforced on
+   every push; `mypy` covers `alembic/`.
 2. **Backups exist but never leave the machine** (R3). A verified local dump is
    most of the work and none of the insurance.
 3. **The RTO is still unevidenced** (R4).
 4. **The client cannot be built for its target platform here** (§5), so no
    end-to-end verification on a real device has been possible.
 
-None of these is architectural. R1 and R2 are a short focused change; R3 needs
-the storage layer; R4 needs one run against realistic data. With those closed
-and a device build verified somewhere with a working Xcode, the assessment
-becomes READY.
+R2 (41 pre-existing `mypy` errors in `tests/`) is a short focused change; R3
+needs the storage layer; R4 needs one run against realistic data. With those
+closed and a device build verified somewhere with a working Xcode, the
+assessment becomes READY.
 
-**What I would not ship without:** R1. Everything found in this audit was found
+**What I would not ship without:** R3 and R4 — the two operational blockers
+that remain. Everything found in this audit was found
 by something that fails loudly. The gaps that remain are the places where
 nothing does.
