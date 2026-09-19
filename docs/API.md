@@ -18,8 +18,10 @@ until then it is the contract the implementation must satisfy.
 
 Creates accept an `Idempotency-Key` header. The key, the endpoint, and a hash of the request body
 are stored in `idempotency_keys`; replaying the same key returns the **stored response** rather than
-creating a second row. Offline-queued record creates use the device-generated `client_uuid` as the
-key, which is also enforced at the database level by `ux_records_client_uuid`.
+creating a second row. A client may also send a device-generated `client_uuid`, enforced at the
+database level by `ux_records_client_uuid`. (This was designed for an offline outbox; offline sync
+was cut from scope, but the column and its uniqueness constraint remain and still de-duplicate a
+retried create.)
 
 Keys older than 48 hours are removed by the nightly job.
 
@@ -182,18 +184,13 @@ dates; a manager sees only what their store scope and page grants allow.
 | POST | `/pages/{id}/records/query` | ✅ | 🟡 granted |
 | POST | `/pages/{id}/aggregate` | ✅ | 🟡 granted |
 | GET | `/pages/{id}/column-values/{key}` | ✅ | 🟡 granted |
-| POST | `/attachments/presign` | ✅ | ✅ |
-| POST | `/attachments/{id}/complete` | ✅ | ✅ |
-| GET | `/attachments/{id}/url` | ✅ | 🟡 granted |
-| DELETE | `/attachments/{id}` | ✅ | ❌ |
-| **POST** | `/exports` | ✅ | **❌** |
-| GET | `/dashboard` | ✅ | 🟡 permitted widgets |
-| **PATCH / DELETE** | `/dashboard/widgets/{id}` | ✅ | **❌** |
+| **POST** | `/pages/{id}/export` | ✅ | **❌** |
+| GET | `/dashboard/digest` | ✅ | ✅ |
 | GET | `/reconciliation` | ✅ | 🟡 granted + store scope |
-| GET | `/audit` | ✅ | 🟡 own actions |
+| GET | `/audit-logs` | ✅ | 🟡 entries for pages they can view |
+| **GET** | `/audit-logs/export` | ✅ | **❌** |
 | **POST** | `/ai/sessions` | ✅ | **❌** |
 | **POST** | `/ai/sessions/{id}/messages` | ✅ | **❌** |
-| **GET** | `/ai/proposals/{id}` | ✅ | **❌** |
 | **POST** | `/ai/proposals/{id}/apply` | ✅ | **❌** |
 | **POST** | `/ai/proposals/{id}/cancel` | ✅ | **❌** |
 | GET | `/health`, `/health/ready` | public | public |
@@ -257,7 +254,7 @@ never carried in the token, so a revoked grant takes effect immediately.
     { "name": "Date",     "data_type": "DATE",     "is_required": true, "is_indexed": true },
     { "name": "Category", "data_type": "SELECT",   "config": { "options": ["Electricity","Rent","Transport"], "default": "Other" } },
     { "name": "Amount",   "data_type": "CURRENCY", "is_required": true, "is_indexed": true, "config": { "min": 0 } },
-    { "name": "Receipt",  "data_type": "ATTACHMENT" }
+    { "name": "Note",     "data_type": "TEXT" }
   ],
   "date_column_key": "date"
 }
@@ -393,7 +390,18 @@ Distinct values for a column — SELECT options, or observed text values. This i
 
 ---
 
-## 6. Attachments
+## 6. Attachments — designed, not built
+
+> **None of this exists yet.** There is no attachments router mounted
+> (`app/main.py`), `app/routers/attachments.py` and `app/services/`,
+> `app/repositories/` and `app/storage/`'s attachment modules are empty stubs,
+> and the `ATTACHMENT` column type is no longer offered when defining a column
+> because choosing it produced a field that could never hold anything.
+>
+> The design below is retained as the intended shape for when the bucket layer
+> is built. Until then it describes nothing that is callable, and the four
+> endpoints it names were listed in §4's permission table as live until that
+> was corrected.
 
 ```mermaid
 sequenceDiagram
@@ -434,20 +442,26 @@ values. **Every export writes an audit entry** — it is a data-egress event.
 
 ## 8. Dashboard and audit
 
-### `GET /dashboard`
+### `GET /dashboard/digest`
 
-Widget *creation* (there is no `POST /dashboard/widgets` any more — that ability was removed by
-product decision) — an Owner can still edit (`PATCH`) or delete (`DELETE`) a widget that already
-exists, and everyone can view/evaluate one, but nothing in the app creates a new one.
+The previous day's digest for the caller's company: pages with no records in N
+days, records flagged `needs_review`, audit-chain breaks, and AI spend.
+Produced by the nightly job (`app/tasks/daily_digest.py`).
 
-Types: `METRIC`, `TREND`, `BREAKDOWN`, `LIST`, `REVIEW_QUEUE`. `visible_to: null` means everyone
-with page access. Managers see only widgets whose source page they can access.
+**Dashboard widgets were removed.** `GET /dashboard`, `PATCH`/`DELETE
+/dashboard/widgets/{id}` and `/dashboard/widgets/{id}/data` no longer exist,
+and the `dashboard_widgets` table was dropped in migration 0022. Nothing in the
+application could ever create a widget — there was no create endpoint and no
+other insert path — so the table could only ever be empty in production.
 
-### `GET /audit`
+### `GET /audit-logs`
 
 Filterable by user, page, entity, date, and source (`APP` / `AI` / `CSV` / `SYSTEM`). Owners see
-everything; **managers see only their own actions**. Rendered as plain sentences for the Owner, not
-as developer output. Exportable by the Owner; retained seven years.
+everything; **a manager sees every entry for the pages they have view access to** — not merely their
+own actions, which is what this section claimed until the rule was checked against
+`audit_read_service._viewable_page_ids`. Entries with no `page_id` (logins, user management) stay
+Owner-only. Rendered as plain sentences for the Owner, not as developer output. Exportable by the
+Owner; retained seven years.
 
 ---
 

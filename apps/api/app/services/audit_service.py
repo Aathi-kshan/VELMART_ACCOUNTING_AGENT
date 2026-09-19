@@ -83,14 +83,22 @@ async def write_audit_log(
         "ua": user_agent,
     }
 
-    async def _write() -> None:
-        # RLS applies to app_user, so the tenant context must be set inside
-        # this transaction first or the insert is refused by tenant_isolation.
-        await set_rls_context(session, company_id=company_id, role=actor_role or "OWNER")
-        await session.execute(_INSERT_AUDIT_LOG, params)
-
     if session.in_transaction():
-        await _write()
-    else:
-        async with session.begin():
-            await _write()
+        # The caller already armed this transaction's RLS context — writing
+        # audit rows is never the first thing a request does. Re-arming here
+        # actively broke it: `set_rls_context` rewrites all three settings, so
+        # passing no `store_ids` cleared `app.store_ids` for the rest of the
+        # caller's transaction and every later query lost its store scoping.
+        # The old `role=actor_role or "OWNER"` fallback was worse — a caller
+        # that omitted `actor_role` silently raised the transaction's RLS role
+        # to OWNER. `audit_logs` carries `tenant_isolation` only (migration
+        # 0006), so the role was never needed for this insert in any case.
+        await session.execute(_INSERT_AUDIT_LOG, params)
+        return
+
+    # A session with no transaction of its own (the raw `get_session` that
+    # `require_owner` uses): open one and arm it. It ends at the commit
+    # below, so nothing set here outlives this function.
+    async with session.begin():
+        await set_rls_context(session, company_id=company_id, role=actor_role or "MANAGER")
+        await session.execute(_INSERT_AUDIT_LOG, params)

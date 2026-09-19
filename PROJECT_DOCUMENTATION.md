@@ -374,7 +374,9 @@ compiled and run on any device. This step has not happened.
 | `Dockerfile.api` | Instructions for building the backend into a Docker container image | ✅ Written, used locally |
 | `docker-compose.yml` | Runs PostgreSQL (and optionally the API) locally with one command | ✅ Written and used |
 | `railway.json` | Configuration for deploying to the Railway cloud platform | 🟡 Written, but no Railway project exists to use it |
-| `scripts/backup_dump.sh`, `restore_drill.sh`, `seed_demo.py` | Planned scripts for backups, restore testing, and demo data | ⛔ Empty placeholder files |
+| `scripts/backup_dump.sh` | Verified logical backup with checksum and retention pruning | ✅ Implemented and run |
+| `scripts/restore_drill.sh` | Restores into a scratch database and verifies migration head, per-table row counts and the audit chain | ✅ Implemented; first drill recorded in `docs/RUNBOOK.md` §5 |
+| `scripts/seed_demo.py` | Provisions a company (`--name/--owner-email/--password`), the demo company (`--demo`), or repairs companies missing system pages (`--repair-all`) | ✅ Implemented and run |
 
 ### `.github/workflows/` — automated checks
 

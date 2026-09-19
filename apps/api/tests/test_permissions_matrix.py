@@ -193,28 +193,6 @@ async def ledger_record(
 
 
 @pytest.fixture
-async def dashboard_widget(
-    session: AsyncSession, company: uuid.UUID, page: uuid.UUID, owner: uuid.UUID
-) -> uuid.UUID:
-    widget_id = uuid.uuid4()
-    await session.execute(
-        text(
-            "INSERT INTO dashboard_widgets "
-            "(id, company_id, page_id, title, widget_type, config, created_by) "
-            "VALUES (:id, :company_id, :page_id, 'Matrix Widget', 'LIST', '{}'::jsonb, :owner)"
-        ),
-        {
-            "id": str(widget_id),
-            "company_id": str(company),
-            "page_id": str(page),
-            "owner": str(owner),
-        },
-    )
-    await session.commit()
-    return widget_id
-
-
-@pytest.fixture
 async def ai_session_id(session: AsyncSession, company: uuid.UUID, owner: uuid.UUID) -> uuid.UUID:
     ai_session_id = uuid.uuid4()
     await session.execute(
@@ -262,7 +240,6 @@ _PATH_PARAMS = {
     "{page_id}": "page_id",
     "{column_id}": "column_id",
     "{record_id}": "record_id",
-    "{widget_id}": "widget_id",
     "{session_id}": "ai_session_id",
     "{proposal_id}": "ai_proposal_id",
 }
@@ -300,12 +277,6 @@ _BODIES: dict[tuple[str, str], dict[str, object]] = {
     },
     ("POST", "/pages/{page_id}/export"): {"filters": []},
     ("POST", "/records/{record_id}/reverse"): {"version": 1},
-    ("POST", "/dashboard/widgets"): {
-        "title": "Matrix New Widget",
-        "widget_type": "LIST",
-        "page_key": "matrix_page",
-    },
-    ("PATCH", "/dashboard/widgets/{widget_id}"): {"title": "Matrix Renamed Widget"},
     ("POST", "/ai/sessions"): {},
     ("POST", "/ai/sessions/{session_id}/messages"): {
         "message": "How much did we spend last month?"
@@ -391,7 +362,6 @@ async def test_endpoint_permissions(
     page_column: uuid.UUID,
     page_record: uuid.UUID,
     ledger_record: uuid.UUID,
-    dashboard_widget: uuid.UUID,
     ai_session_id: uuid.UUID,
     ai_proposal_id: uuid.UUID,
 ) -> None:
@@ -409,7 +379,6 @@ async def test_endpoint_permissions(
             "column_id": page_column,
             "record_id": page_record,
             "ledger_record_id": ledger_record,
-            "widget_id": dashboard_widget,
             "ai_session_id": ai_session_id,
             "ai_proposal_id": ai_proposal_id,
         },

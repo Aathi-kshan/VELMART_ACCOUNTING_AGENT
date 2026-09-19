@@ -23,6 +23,7 @@ from app.core.errors import (
     ReservedPageKeyError,
     SystemPageImmutableError,
     ValidationFailedError,
+    VersionConflictError,
 )
 from app.dependencies.guards import require_page_access
 from app.models.business import RESERVED_PAGE_KEYS
@@ -32,6 +33,7 @@ from app.models.page_column import ColumnType, PageColumn
 from app.models.user import User, UserRole
 from app.repositories.base import get_for_company
 from app.schemas.page import CreatePageRequest, UpdatePageRequest
+from app.services import formula_service
 from app.services.audit_service import write_audit_log
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -196,6 +198,18 @@ async def create_page(
                 description=col_def.description,
             )
         )
+
+    # FORMULA columns were validated only by `schema_service.add_column`/
+    # `update_column`, so an expression supplied in this initial payload
+    # skipped the whitelist parser entirely: a formula naming a column that
+    # does not exist, or calling a function with the wrong number of
+    # arguments, was accepted here and only failed later — silently blank on
+    # read (`formula_service.prepare` swallows it) or as a 500 from inside a
+    # filter/sort/aggregate once the SQL compiler indexed a missing argument.
+    # Validate at save time, like every other column config above.
+    for column in columns:
+        if column.data_type is ColumnType.FORMULA:
+            formula_service.validate_formula_column(column, columns)
 
     date_column_key = _resolve_special_key(
         payload.date_column_key, columns, {ColumnType.DATE, ColumnType.DATETIME}, "date_column_key"
@@ -489,8 +503,48 @@ async def get_page_schema(
     return page, columns
 
 
+async def bump_schema_version(
+    session: AsyncSession, page_id: uuid.UUID, *, expected_version: int | None = None
+) -> int:
+    """Advance a page's schema version, optionally under an `If-Match` check.
+
+    `pages.version` has existed since 0002 and is returned on every
+    `PageOut`/`PageSchemaOut`, but nothing ever wrote it — it stayed at 1 for
+    the life of a page however often the page was renamed or its columns
+    added, retyped or archived. Two things followed from that: a client
+    caching a `PageSchema` had no way to notice it had gone stale, which
+    matters precisely because this engine's promise is that an Owner changes
+    a page's columns and clients pick it up with no app release; and the
+    version being *present* implied an optimistic-locking check that did not
+    exist, so `If-Match: 1` was accepted forever and two Owners restructuring
+    a page at once silently overwrote each other.
+
+    `expected_version` is optional on purpose. The Flutter client sends
+    `If-Match` for records only (`page_repository.dart`), so requiring it on
+    schema edits would break every existing caller. Supplying it opts into
+    the check; omitting it bumps unconditionally.
+    """
+    stmt = update(Page).where(Page.id == page_id)
+    if expected_version is not None:
+        stmt = stmt.where(Page.version == expected_version)
+    new_version = await session.scalar(
+        stmt.values(version=Page.version + 1).returning(Page.version)
+    )
+    if new_version is None:
+        current = await session.scalar(select(Page.version).where(Page.id == page_id))
+        raise VersionConflictError(
+            f"This page's structure has changed since version {expected_version}.",
+            extra={"current_version": current} if current is not None else None,
+        )
+    return int(new_version)
+
+
 async def update_page(
-    session: AsyncSession, ctx: SecurityContext, page_id: uuid.UUID, payload: UpdatePageRequest
+    session: AsyncSession,
+    ctx: SecurityContext,
+    page_id: uuid.UUID,
+    payload: UpdatePageRequest,
+    version: int | None = None,
 ) -> Page | None:
     """Returns None if not found in this company — router turns that into 404."""
     page = await get_for_company(session, Page, page_id, ctx.company_id)
@@ -542,7 +596,13 @@ async def update_page(
 
     if values:
         await session.execute(update(Page).where(Page.id == page.id).values(**values))
-        await session.refresh(page)
+
+    # Bumped even when `values` is empty but a version was asserted, so an
+    # `If-Match` that is already stale is still reported rather than silently
+    # succeeding as a no-op.
+    if values or version is not None:
+        await bump_schema_version(session, page.id, expected_version=version)
+    await session.refresh(page)
 
     await write_audit_log(
         session,

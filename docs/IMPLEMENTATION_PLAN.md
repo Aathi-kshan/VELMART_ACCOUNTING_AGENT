@@ -31,15 +31,34 @@ Two rules that override any schedule pressure:
 
 ## Current status
 
-> **Later feature removal (post-P5), read this before the rows below:** CSV import, the entire
-> `page_validations` (Validation Rules) system, and dashboard widget *creation* (`POST
-> /dashboard/widgets`, starter suggestions, the "Add widget" flow) were all removed completely by
-> product decision — code, schema, tests, docs, dependencies. Every row below that describes
-> building one of these (P3.5's CSV import half, P4's `page_validations`, P5's widget CRUD/starter
-> suggestions) is an accurate historical record of what was built *at the time*, not a description
-> of the current codebase. CSV **export**, dashboard widget **viewing/evaluation**, and widget
-> **edit/delete** (an Owner can still `PATCH`/`DELETE` an existing widget) were all explicitly kept
-> and are unaffected. See `docs/PROJECT_PLAN.md` §11.3, §13, §15 for the current, accurate state.
+> **Later feature removal, read this before the rows below.** The rows in this document are an
+> accurate historical record of what was built *at the time of each phase*, not a description of the
+> current codebase. The following were removed afterwards, by product decision — code, schema,
+> tests, docs and dependencies:
+>
+> | Removed | When | Files the rows below still name, which no longer exist |
+> |---|---|---|
+> | CSV **import** (preview/validate/commit/rollback) | post-P5 | `app/routers/imports.py`, `csv_import_screen.dart`, `import_history_screen.dart` |
+> | `page_validations` (Validation Rules) | post-P5, migration `0014` | `app/services/validation_service.py`, `validation_editor_screen.dart` |
+> | Dashboard widgets — **the entire feature**, not only creation | migration `0022` | `app/models/dashboard_widget.py`, `app/services/dashboard_service.py`'s widget half, `GET /dashboard/widgets`, `PATCH`/`DELETE /dashboard/widgets/{id}`, `/dashboard/widgets/{id}/data` |
+> | Offline sync / outbox | post-P5 | `lib/core/sync/*`, `lib/core/storage/database.dart` |
+>
+> An earlier version of this notice said only widget *creation* had been removed and that an Owner
+> could "still `PATCH`/`DELETE` an existing widget". That is no longer true: nothing in the
+> application could ever create a widget, so the table could only ever be empty, and the whole
+> feature was dropped.
+>
+> **Kept and unaffected:** CSV **export** (`POST /pages/{id}/export`, `app/services/csv_service.py`),
+> `GET /reconciliation`, and `GET /dashboard/digest`.
+>
+> **Never built, despite being described as done in places:** attachments. There is no attachments
+> router mounted; `app/routers/attachments.py`, `app/services/attachment_service.py`,
+> `app/repositories/attachments.py` and `app/storage/*` are empty stubs, and `ATTACHMENT` is no
+> longer offered as a column type because it produced a field that could never hold anything.
+>
+> Test counts in the rows below are per-phase snapshots and are not maintained; see
+> `FINAL_VERIFICATION_REPORT.md` for current numbers. See `docs/PROJECT_PLAN.md` §11.3, §13, §15 for
+> the current, accurate state.
 
 | Item | State |
 |---|---|
@@ -272,7 +291,7 @@ models under `app/models/business/`, `SYSTEM_PAGE_KEYS` / `RESERVED_PAGE_KEYS`, 
 | # | Step | Files |
 |---|---|---|
 | 3.5.1 | System-page registration: insert the six `pages` rows (`is_system = true`, `storage_table` set) and their `page_columns` — keys, types, display names, `is_protected` on `cheque_status`, `date_column_key` | `app/services/page_service.py` |
-| 3.5.2 | Seed on company creation, so a new company has all six from first login | `infra/scripts/seed_demo.py`, `app/services/page_service.py` |
+| 3.5.2 | Seed system pages for a company | `infra/scripts/seed_demo.py`, `app/services/page_service.py`. **Not on company creation** — there is no `POST /companies` endpoint; the script provisions or repairs (`--repair-all`) a company explicitly. |
 | 3.5.3 | **Reserved keys**: refuse `POST /pages` for `RESERVED_PAGE_KEYS`, including singular/plural variants → 409 `RESERVED_PAGE_KEY` | `app/services/page_service.py` |
 | 3.5.4 | **System schemas immutable**: refuse `PATCH`/`DELETE` on a system page and any column edit → 409 `SYSTEM_PAGE_IMMUTABLE` | `app/services/schema_service.py` |
 | 3.5.5 | **Storage dispatch** on `pages.storage_table` behind one repository interface | `app/repositories/records.py` |
@@ -329,7 +348,7 @@ protected status), and every calculation matches a hand-worked month.
 | 4.3 | `Decimal` evaluator | `app/core/expressions/evaluator.py` |
 | 4.4 | Formula columns — computed on read **and** on aggregation, never stored; cycle rejection via a dependency graph at save time | `app/services/formula_service.py` |
 | 4.5 | `RECORD_REF` resolution and integrity; block deleting a referenced record | `app/services/reference_service.py` |
-| 4.6 | `page_validations`: `ERROR` blocks the save (422), `WARNING` saves + sets `needs_review` | `app/services/validation_service.py` |
+| 4.6 | ~~`page_validations`~~ — **removed** (migration `0014`); `validation_service.py` no longer exists | — |
 | 4.7 | Protected columns: manager gets the default and **cannot override at create time**; Owner-only change endpoint auditing `PROTECTED_FIELD_CHANGE` | `app/services/protected_field_service.py` |
 | 4.8 | Ledger pages (`kind = LEDGER`): reversal records, running balance as a window function — **never stored** | `app/services/record_service.py` |
 | 4.9 | Review queue for `needs_review` records | `app/services/query_service.py` |

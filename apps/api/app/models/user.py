@@ -83,6 +83,15 @@ class IdempotencyKey(Base):
 
     __tablename__ = "idempotency_keys"
 
+    #: Part of the primary key, not just a scoping column: the key string is
+    #: client-supplied, so a global namespace let one company replay
+    #: another's stored response body (migration 0017).
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False

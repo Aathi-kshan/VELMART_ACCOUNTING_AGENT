@@ -24,8 +24,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import SecurityContext
-from app.core.errors import EmailAlreadyExistsError
+from app.core.errors import EmailAlreadyExistsError, ValidationFailedError
 from app.core.security import hash_password
+from app.models.store import Store
 from app.models.user import User, UserRole, UserStore
 from app.repositories.base import get_for_company, list_for_company
 from app.schemas.user import CreateUserRequest, UpdateUserRequest
@@ -37,9 +38,35 @@ async def list_users(session: AsyncSession, ctx: SecurityContext) -> list[User]:
 
 
 async def _set_store_assignments(
-    session: AsyncSession, *, user_id: uuid.UUID, store_ids: list[uuid.UUID]
+    session: AsyncSession,
+    ctx: SecurityContext,
+    *,
+    user_id: uuid.UUID,
+    store_ids: list[uuid.UUID],
 ) -> None:
-    """Replace this user's `user_stores` rows wholesale with `store_ids`."""
+    """Replace this user's `user_stores` rows wholesale with `store_ids`.
+
+    Every id is checked against the caller's own company first. `store_ids`
+    comes straight from the request body, and `user_stores` has no
+    `company_id` column and is deliberately excluded from RLS (migration
+    0006), so nothing below this line would have caught an Owner assigning
+    one of their managers to another company's store. That id then flows
+    into the manager's JWT via `auth_service.store_ids_for` and becomes the
+    manager's RLS store scope.
+    """
+    if store_ids:
+        known = await session.execute(
+            select(Store.id).where(
+                Store.id.in_(store_ids), Store.company_id == ctx.company_id
+            )
+        )
+        unknown = set(store_ids) - {row for (row,) in known.all()}
+        if unknown:
+            raise ValidationFailedError(
+                "store_ids: " + ", ".join(sorted(str(s) for s in unknown)) + " is not a store "
+                "in this company."
+            )
+
     await session.execute(delete(UserStore).where(UserStore.user_id == user_id))
     if store_ids:
         await session.execute(
@@ -79,7 +106,7 @@ async def create_user(
         raise EmailAlreadyExistsError("Email is already taken.") from exc
 
     if payload.role == UserRole.MANAGER and payload.store_ids:
-        await _set_store_assignments(session, user_id=user.id, store_ids=payload.store_ids)
+        await _set_store_assignments(session, ctx, user_id=user.id, store_ids=payload.store_ids)
 
     await write_audit_log(
         session,
@@ -133,7 +160,7 @@ async def update_user(
         await session.refresh(user)
 
     if payload.store_ids is not None:
-        await _set_store_assignments(session, user_id=user.id, store_ids=payload.store_ids)
+        await _set_store_assignments(session, ctx, user_id=user.id, store_ids=payload.store_ids)
 
     await write_audit_log(
         session,

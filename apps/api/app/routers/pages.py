@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import SecurityContext
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ValidationFailedError
 from app.dependencies.auth import security_context
 from app.dependencies.db import get_rls_session
 from app.dependencies.guards import require_owner
@@ -68,10 +68,23 @@ async def get_page_schema(
 async def update_page(
     page_id: uuid.UUID,
     payload: UpdatePageRequest,
+    request: Request,
     ctx: SecurityContext = Depends(require_owner),
     session: AsyncSession = Depends(get_rls_session),
 ) -> PageSchemaOut:
-    page = await page_service.update_page(session, ctx, page_id, payload)
+    # Optional, unlike on records: the Flutter client sends `If-Match` for
+    # records only, so requiring it here would break every existing caller.
+    # Supplying it opts into the optimistic-locking check that `pages.version`
+    # has always implied but never actually performed.
+    version: int | None = None
+    if_match = request.headers.get("If-Match")
+    if if_match is not None:
+        try:
+            version = int(if_match)
+        except ValueError as exc:
+            raise ValidationFailedError("If-Match must be an integer version.") from exc
+
+    page = await page_service.update_page(session, ctx, page_id, payload, version)
     if page is None:
         raise NotFoundError("No such page.")
     return await _schema_out(session, page)

@@ -24,6 +24,7 @@ internally) rather than a separate dependency that would just re-fetch
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Literal
 
@@ -33,36 +34,82 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import SecurityContext
 from app.core.errors import NotFoundError, PermissionDeniedError
-from app.db.session import get_session
+from app.core.logging import get_logger
+from app.db.session import get_sessionmaker
 from app.dependencies.auth import security_context
 from app.services.audit_service import write_audit_log
+
+log = get_logger(__name__)
+
+#: A denial audit may wait this long for a connection before giving up. The
+#: request is already refusing; holding a pool slot to record that is not
+#: worth blocking other requests for.
+_AUDIT_TIMEOUT_SECONDS = 5.0
+
+
+async def _audit_denial(ctx: SecurityContext, **fields: object) -> None:
+    """Record a permission denial on its own connection.
+
+    The record has to survive the exception raised immediately afterwards,
+    and it used to be made durable by calling `session.commit()` on the
+    caller's own session. That worked, but it committed whatever else the
+    request had already written — turning a refusal into a partial save —
+    and it ended the transaction that `get_rls_session` was still holding
+    open, discarding the transaction-scoped RLS settings with it.
+
+    A separate short-lived session commits the audit row on its own and
+    leaves the request's transaction untouched, free to roll back exactly as
+    a failed request should.
+
+    Two things this has to get right, both found by re-auditing the first
+    version of this function:
+
+    **It must not fail the request.** The caller is already refusing with a
+    403 or 404. If the audit write raises — a full pool, a lock, anything —
+    letting that propagate replaces a clean refusal with a 500, which is both
+    a worse answer and a way to turn a permission probe into a denial of
+    service. The denial is logged instead, so a lost audit row is visible
+    rather than silent.
+
+    **It must not exhaust the pool.** The request already holds a connection
+    for its own transaction, so a denial needs a second one concurrently.
+    With `DB_POOL_SIZE + DB_MAX_OVERFLOW` connections available, enough
+    simultaneous denials could take every slot while each waits for another —
+    exactly the flood a permission-denial burst produces. `_AUDIT_TIMEOUT`
+    bounds the wait so a denial gives up and logs rather than holding a slot.
+    """
+    try:
+        # Deliberately not wrapped in `audit_session.begin()`: with no
+        # transaction open, `write_audit_log` opens one itself, arms the RLS
+        # context this fresh connection does not yet have, and commits on exit.
+        async with asyncio.timeout(_AUDIT_TIMEOUT_SECONDS):
+            async with get_sessionmaker()() as audit_session:
+                await write_audit_log(
+                    audit_session,
+                    company_id=ctx.company_id,
+                    actor_user_id=ctx.user_id,
+                    actor_role=ctx.role.value,
+                    **fields,  # type: ignore[arg-type]
+                )
+    except Exception:
+        # Never re-raise: the caller's 403/404 is the correct response and
+        # must not become a 500 because the audit could not be written.
+        log.exception(
+            "audit.denial_write_failed",
+            company_id=str(ctx.company_id),
+            user_id=str(ctx.user_id),
+            action=fields.get("action"),
+        )
 
 
 async def require_owner(
     ctx: SecurityContext = Depends(security_context),
-    session: AsyncSession = Depends(get_session),
 ) -> SecurityContext:
     """403 if the caller is not an OWNER. Every denial is audited."""
     if ctx.is_owner:
         return ctx
 
-    await write_audit_log(
-        session,
-        company_id=ctx.company_id,
-        action="PERMISSION_DENIED",
-        entity_type="user",
-        entity_id=ctx.user_id,
-        actor_user_id=ctx.user_id,
-        actor_role=ctx.role.value,
-    )
-    # Commit before raising, not after: a sibling dependency (get_rls_session)
-    # may already have an open transaction on this same session, in which
-    # case write_audit_log correctly wrote into it rather than opening its
-    # own — but that means nothing has committed it yet. Raising now, without
-    # committing first, would let that transaction's own rollback-on-exception
-    # silently erase the very audit row this function exists to guarantee.
-    # Same bug, same fix, as auth_service.py's commit-before-raise (P1).
-    await session.commit()
+    await _audit_denial(ctx, action="PERMISSION_DENIED", entity_type="user", entity_id=ctx.user_id)
     raise PermissionDeniedError("This action is restricted to the Owner.")
 
 
@@ -106,22 +153,13 @@ async def require_page_access(
     # Both denial shapes are worth a permanent record (plan section 18.2) even
     # though they return different status codes to the caller — the audit
     # trail is owner-only, so recording "someone tried" here leaks nothing.
-    await write_audit_log(
-        session,
-        company_id=ctx.company_id,
+    await _audit_denial(
+        ctx,
         action="PERMISSION_DENIED",
         entity_type="page",
         entity_id=page_id,
         page_id=page_id,
-        actor_user_id=ctx.user_id,
-        actor_role=ctx.role.value,
     )
-    # Commit before raising — same bug, same fix as `require_owner` above
-    # (P5, found while writing its own audit test): this function is called
-    # from inside `get_rls_session`'s own `async with session.begin():`, so
-    # without committing here first, that transaction's rollback-on-exception
-    # would silently erase the very audit row just written.
-    await session.commit()
     if row is None:
         raise NotFoundError("No such page.")
     raise PermissionDeniedError(f"You do not have {need} access to this page.")

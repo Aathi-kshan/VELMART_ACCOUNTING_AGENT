@@ -89,6 +89,20 @@ class Settings(BaseSettings):
     MAX_PAGES_PER_COMPANY: int = 100
     MAX_COLUMNS_PER_PAGE: int = 60
     RATE_LIMIT_PER_MINUTE: int = 100
+    #: How many reverse proxies sit in front of this app. 0 (the default)
+    #: means `X-Forwarded-For` is ignored entirely — the header is
+    #: client-supplied, so trusting it without a proxy in front lets a caller
+    #: forge a new IP per request and evade IP rate limiting completely.
+    #: Set to 1 behind a single terminating proxy such as Railway, or the
+    #: whole deployment shares one login-attempt bucket.
+    TRUSTED_PROXY_HOPS: int = 0
+    #: Where the nightly `pg_dump` writes. Unset means a temp directory,
+    #: which on a container platform is discarded on the next redeploy — the
+    #: dump succeeds and then vanishes. Production must point this at a
+    #: mounted volume; `app/tasks/export_build.py` warns loudly when it is
+    #: unset so a backup that will not survive is not mistaken for one that
+    #: will.
+    BACKUP_DIR: str | None = None
 
     @property
     def is_production(self) -> bool:

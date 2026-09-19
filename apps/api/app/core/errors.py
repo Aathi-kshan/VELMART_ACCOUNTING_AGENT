@@ -295,3 +295,16 @@ def register_exception_handlers(app: FastAPI) -> None:
                 ]
             },
         )
+
+
+class RateLimitedError(AppError):
+    """Too many requests in the current window (`app/core/ratelimit.py`).
+
+    Defined here rather than in `app/routers/auth.py`, where it used to live:
+    the per-user API throttle is applied in `app/dependencies/auth.py`, and a
+    dependency importing from a router would invert the layering.
+    """
+
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "RATE_LIMITED"
+    title = "Too many requests"

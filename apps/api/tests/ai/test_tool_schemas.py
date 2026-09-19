@@ -205,3 +205,58 @@ class TestEveryRegisteredToolPassesSchemaSafety:
 
         assert TOOL_REGISTRY["propose_update"].kind == "propose"
         assert TOOL_REGISTRY["propose_status_change"].kind == "propose"
+
+
+class TestForbiddenFieldsAreCheckedAtEveryDepth:
+    """The gate used to inspect only the *root* `properties`.
+
+    Pydantic hoists nested models into `$defs` and refers to them by `$ref`,
+    so a field on a nested model never appears at the root at all. Real tools
+    already nest this way — `QueryRecordsParams` carries `QueryFilter` and
+    `SortSpec` — so a tenancy field added to one of those would have passed
+    the safety check silently, which defeats the point of having a
+    build-time gate rather than per-tool discipline.
+    """
+
+    @staticmethod
+    async def _noop(*, ctx: object) -> dict[str, str]:
+        return {}
+
+    @pytest.mark.parametrize("forbidden", ["company_id", "user_id", "role"])
+    def test_a_nested_model_cannot_smuggle_a_tenancy_field(self, forbidden: str) -> None:
+        nested = type(
+            "NestedParams",
+            (BaseModel,),
+            {"__annotations__": {forbidden: str}},
+        )
+        params = type(
+            "OuterParams",
+            (BaseModel,),
+            {"__annotations__": {"inner": nested}},
+        )
+
+        with pytest.raises(ToolSchemaSafetyError, match=forbidden):
+            register_tool(
+                self._noop,
+                name="smuggler",
+                description="nested tenancy field",
+                params_model=params,
+            )
+
+    def test_a_legitimately_nested_model_is_still_accepted(self) -> None:
+        """The check must not reject ordinary nesting — every read tool uses
+        it."""
+        nested = type(
+            "SafeNested", (BaseModel,), {"__annotations__": {"column": str, "value": str}}
+        )
+        params = type(
+            "SafeOuter", (BaseModel,), {"__annotations__": {"filters": list[nested]}}
+        )
+
+        tool = register_tool(
+            self._noop,
+            name="safe_nested",
+            description="ordinary nesting",
+            params_model=params,
+        )
+        assert tool.name == "safe_nested"

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "//": [
+    "Nightly maintenance service — audit chain verification, pg_dump backup,",
+    "idempotency cleanup, daily digests.",
+    "",
+    "This file exists because none of that was running. app/tasks/nightly.py",
+    "was written, orchestrates all four jobs in order, and exits non-zero on",
+    "failure — but nothing anywhere scheduled it. infra/railway.json defines",
+    "the API service only and carries no cron block, no workflow invoked it,",
+    "and docs/RUNBOOK.md nonetheless described a 'Railway cron' running daily",
+    "at 02:00 SLT. So the audit chain was never verified, no backup was ever",
+    "taken, and no digest was ever sent.",
+    "",
+    "Railway models a cron as its own service with the same image and a",
+    "cronSchedule, so this is deployed as a SECOND service pointed at this",
+    "file rather than merged into railway.json.",
+    "",
+    "Deploy:  railway up --config infra/railway.cron.json",
+    "",
+    "It needs DATABASE_URL_MIGRATOR set (the migrator role owns the schema;",
+    "app_user's DML-only grants are not sufficient for a complete pg_dump),",
+    "and the image must carry postgresql-client — which infra/Dockerfile.api",
+    "did not install until this same pass, so the backup task could only ever",
+    "have failed with 'pg_dump not found'.",
+    "",
+    "02:00 Asia/Colombo is 20:30 UTC the previous day (UTC+5:30). Railway",
+    "cron schedules are UTC, so this is 30 20 * * *, not 0 2 * * *."
+  ],
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "infra/Dockerfile.api"
+  },
+  "deploy": {
+    "startCommand": "python -m app.tasks.nightly",
+    "cronSchedule": "30 20 * * *",
+    "restartPolicyType": "NEVER",
+    "region": "asia-southeast1-eqsg3a",
+    "numReplicas": 1
+  }
+}

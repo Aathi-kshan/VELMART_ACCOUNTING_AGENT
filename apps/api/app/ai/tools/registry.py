@@ -69,8 +69,38 @@ def _require_ctx_parameter(name: str, fn: Callable[..., Awaitable[Any]]) -> None
         )
 
 
+def _properties_everywhere(schema: dict[str, Any]) -> set[str]:
+    """Every property name anywhere in a JSON Schema, not just at the top.
+
+    Pydantic hoists nested models into `$defs` and refers to them by `$ref`,
+    so a field declared on a nested model never appears in the root
+    `properties` at all. Checking only the root therefore inspected the
+    shallowest possible surface: `QueryRecordsParams` already nests
+    `QueryFilter` and `SortSpec` this way, so a `company_id` added to one of
+    those would have passed the gate silently — and this gate is what makes
+    every tool safe by construction rather than by per-tool discipline.
+    """
+    found: set[str] = set()
+    stack: list[Any] = [schema]
+    seen: list[int] = []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            # Guard against a self-referential schema ($ref cycles are legal).
+            if id(node) in seen:
+                continue
+            seen.append(id(node))
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                found.update(properties.keys())
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
 def _require_no_leaked_context_fields(name: str, schema: dict[str, Any]) -> None:
-    leaked = FORBIDDEN_SCHEMA_FIELDS & schema.get("properties", {}).keys()
+    leaked = FORBIDDEN_SCHEMA_FIELDS & _properties_everywhere(schema)
     if leaked:
         raise ToolSchemaSafetyError(
             f"Tool {name!r} exposes forbidden field(s) {sorted(leaked)} in its "

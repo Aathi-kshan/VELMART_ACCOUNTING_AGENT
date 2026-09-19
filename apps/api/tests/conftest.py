@@ -169,23 +169,36 @@ async def _clean_tables(engine) -> AsyncIterator[None]:  # noqa: ANN001
             await conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
 
 
-@pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    """An HTTP client wired to the app in-process.
+@pytest.fixture(autouse=True)
+def _fresh_engines() -> Iterator[None]:
+    """Clear the app's cached engines before every test.
 
-    Clears the read-write *and* read-only (`ai_reader`) engine caches —
-    each is a process-lifetime `lru_cache`, but every test function gets its
-    own asyncio event loop, and a pooled asyncpg connection from a previous
-    test's loop raises "attached to a different loop" if reused here.
+    The read-write and read-only engines are process-lifetime `lru_cache`s,
+    but every test function gets its own asyncio event loop, and a pooled
+    asyncpg connection created on a previous test's loop raises "attached to
+    a different loop" when reused.
+
+    This used to live inside the `client` fixture, which covered the tests
+    that go through HTTP and nothing else. Any test calling app code that
+    reaches for `get_sessionmaker()` directly — a guard writing its denial
+    audit on its own connection, for instance — hit the stale pool instead.
+    Applying it to every test removes the trap rather than leaving each new
+    test to rediscover it.
     """
     from app.db.readonly import get_readonly_engine, get_readonly_sessionmaker
     from app.db.session import get_engine, get_sessionmaker
-    from app.main import create_app
 
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
     get_readonly_engine.cache_clear()
     get_readonly_sessionmaker.cache_clear()
+    yield
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[AsyncClient]:
+    """An HTTP client wired to the app in-process."""
+    from app.main import create_app
 
     app = create_app()
     transport = ASGITransport(app=app)

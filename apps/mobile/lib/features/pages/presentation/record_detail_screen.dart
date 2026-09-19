@@ -155,6 +155,28 @@ class RecordDetailView extends ConsumerWidget {
               onTap: () => _changeProtectedField(context, ref, column),
             ),
           ],
+        // A ledger entry is corrected by reversal, never edited or deleted —
+        // the server rejects PATCH on a LEDGER page outright — so this is the
+        // only correction an Owner has on this page kind.
+        if (schema.page.kind == PageKind.ledger &&
+            canReverseRecord(role) &&
+            record.status == RecordStatus.active) ...[
+          const SizedBox(height: AppSpacing.md),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.warningText,
+              minimumSize: const Size.fromHeight(44),
+            ),
+            onPressed: () => confirmAndReverseRecord(
+              context,
+              ref,
+              record,
+              onReversed: onDeleted,
+            ),
+            icon: const Icon(Icons.undo),
+            label: const Text('Reverse this entry'),
+          ),
+        ],
         const SizedBox(height: AppSpacing.md),
         if (canEditRecord(role) || canDeleteRecord(role))
           Row(
@@ -261,6 +283,66 @@ class RecordDetailView extends ConsumerWidget {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(e.detail)));
     }
+  }
+}
+
+/// Reverse a ledger entry (`POST /records/{id}/reverse`, Owner-only).
+///
+/// A `kind=LEDGER` page's records cannot be edited in place — the server
+/// rejects `PATCH` on them — so a mistake is corrected by reversing the
+/// original and writing a replacement. The endpoint has existed since P4 and
+/// the client already rendered the resulting `REVERSED` status, but nothing
+/// could trigger one, so ledger corrections were impossible from the app.
+///
+/// Reversal is not deletion and the wording says so: the original entry stays
+/// visible, marked reversed, because a ledger that quietly loses rows is
+/// worse than one that shows its corrections.
+Future<bool> confirmAndReverseRecord(
+  BuildContext context,
+  WidgetRef ref,
+  PageRecord record, {
+  VoidCallback? onReversed,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Reverse this entry?'),
+      content: const Text(
+        'This entry stays in the ledger, marked as reversed, and stops '
+        'counting towards totals and the running balance.\n\n'
+        'Add a correcting entry afterwards if the amount was wrong.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => context.pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => context.pop(true),
+          child: const Text('Reverse entry'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return false;
+
+  try {
+    // `version` is the optimistic-locking check: if someone else changed this
+    // entry since it was opened, the server refuses rather than reversing
+    // something other than what was on screen.
+    await ref
+        .read(pageRepositoryProvider)
+        .reverseRecord(record.id, version: record.version);
+    ref.read(recordListControllerProvider(record.pageId).notifier).refresh();
+    ref.invalidate(recordSummaryProvider(record.pageId));
+    onReversed?.call();
+    return true;
+  } on ApiException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.detail)));
+    }
+    return false;
   }
 }
 

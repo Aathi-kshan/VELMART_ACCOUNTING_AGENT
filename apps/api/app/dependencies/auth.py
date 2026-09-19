@@ -21,9 +21,11 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.context import SecurityContext
-from app.core.errors import AppError
+from app.core.errors import AppError, RateLimitedError
 from app.core.logging import bind_request_context
+from app.core.ratelimit import hit_api_user
 from app.core.security import AccessTokenClaims, TokenError, decode_access_token
 from app.db.rls import set_rls_context
 from app.db.session import get_session
@@ -67,6 +69,23 @@ async def _authenticate(
             store_ids=claims.store_ids,
         )
         user = await session.get(User, claims.user_id)
+        # `RATE_LIMIT_PER_MINUTE` was configured and `hit_api_user` was
+        # written, but nothing ever called it — the per-user API throttle
+        # did not exist, and `/auth/refresh` and `/auth/logout` were the only
+        # endpoints anyone had noticed were unthrottled. This is the one
+        # place every authenticated request already passes through, and it
+        # rides the transaction this dependency was opening anyway.
+        # Keyed on the token's own `user_id`, which is signed, so it is
+        # trustworthy before the row is even loaded.
+        throttle = await hit_api_user(
+            session, claims.user_id, limit=get_settings().RATE_LIMIT_PER_MINUTE
+        )
+
+    if not throttle.allowed:
+        raise RateLimitedError(
+            "Too many requests. Please slow down.",
+            headers={"Retry-After": str(throttle.retry_after_seconds)},
+        )
 
     if user is None or not user.is_active:
         raise UnauthenticatedError("Account is not active.")

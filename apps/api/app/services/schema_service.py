@@ -34,6 +34,7 @@ from app.services import formula_service
 from app.services.audit_service import write_audit_log
 from app.services.page_service import (
     allocate_projection_slot,
+    bump_schema_version,
     derive_key,
     get_page_columns,
     validate_column_config,
@@ -161,6 +162,10 @@ async def add_column(
         actor_role=ctx.role.value,
         new_data={"key": column.key, "name": column.name, "data_type": column.data_type.value},
     )
+    # A column change *is* a schema change, so the page's own version moves
+    # with it — that is what lets a client holding a cached `PageSchema`
+    # notice it has gone stale.
+    await bump_schema_version(session, page.id)
     return column
 
 
@@ -286,6 +291,7 @@ async def update_column(
             "is_archived": column.is_archived,
         },
     )
+    await bump_schema_version(session, page.id)
     return column, removed_options_in_use
 
 

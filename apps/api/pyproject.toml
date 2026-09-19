@@ -58,7 +58,17 @@ extend-immutable-calls = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"alembic/versions/*" = ["E501"]  # DDL reads better unwrapped
+"alembic/versions/*" = [
+    "E501",  # DDL reads better unwrapped
+    # S608 (SQL built by string construction): migrations are DDL, and DDL
+    # cannot take bind parameters — a policy or trigger body has to be
+    # assembled as text. Every value interpolated in this directory is a
+    # module-level constant in the migration itself (a fixed table list, a
+    # fixed field list, a lock key), never anything caller-supplied. The
+    # runtime code that *can* bind parameters is still checked: this
+    # exemption covers `alembic/versions/` only.
+    "S608",
+]
 # "bearer" is the OAuth token_type label, not a credential.
 "app/schemas/auth.py" = ["S105"]
 # testcontainers credentials are throwaway, and "bearer" is the OAuth

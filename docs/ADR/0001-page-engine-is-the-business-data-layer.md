@@ -73,8 +73,10 @@ Owner marks indexed.
   consequences and PROJECT_PLAN §20.3).
 - Only four numeric and two date projections exist per page. This covers every realistic page, but
   a page wanting a fifth indexed numeric column needs the projection budget revisited.
-- The database cannot express a business-level `CHECK` across Owner columns; cross-column rules are
-  enforced by `page_validations` in the service layer instead.
+- The database cannot express a business-level `CHECK` across Owner columns. This originally said
+  such rules were enforced by `page_validations` in the service layer; **that feature was removed**
+  (migration `0014` drops the table), so cross-column rules are currently not enforced at all.
+  Per-column constraints still are, through each column's own `config`.
 - JSONB performance must be measured at ~100k records. One shop is years away from that volume.
 
 ## Invariants this ADR creates

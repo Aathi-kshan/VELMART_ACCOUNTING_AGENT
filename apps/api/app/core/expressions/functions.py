@@ -92,3 +92,26 @@ FORMULA_FUNCTIONS: dict[str, Callable[..., Any]] = {
     "today": fn_today,
     "coalesce": fn_coalesce,
 }
+
+#: `name -> (minimum args, maximum args)`, where `None` means variadic.
+#:
+#: The parser enforces this at save time so neither backend ever receives a
+#: call it cannot evaluate. Without it, arity mistakes reached the backends
+#: and failed differently in each: `sum()` raised `IndexError` in the SQL
+#: compiler and returned `Decimal(0)` in Python, `coalesce()` compiled to
+#: `COALESCE()` and became a Postgres syntax error mid-query, and
+#: `abs(a, b)` raised `TypeError` in Python while SQL silently dropped the
+#: second argument. An uncaught `IndexError` inside a filter or aggregate is
+#: a 500, so this is the difference between a clear 422 at save time and an
+#: opaque failure at read time.
+FORMULA_ARITY: dict[str, tuple[int, int | None]] = {
+    "sum": (1, None),
+    "min": (1, None),
+    "max": (1, None),
+    "round": (1, 2),
+    "abs": (1, 1),
+    "safe_div": (2, 3),
+    "days_between": (2, 2),
+    "today": (0, 0),
+    "coalesce": (1, None),
+}

@@ -43,6 +43,7 @@ from app.core import ratelimit
 from app.core.context import SecurityContext
 from app.core.dates import now_utc
 from app.core.errors import AiDisabledError, AppError, NotFoundError
+from app.db.session import get_sessionmaker
 from app.models.ai import AiMessage, AiSession
 from app.models.company import CompanySettings
 
@@ -346,6 +347,27 @@ async def run_pipeline(
         )
 
 
+async def _meter_ai_request(user_id: uuid.UUID) -> ratelimit.RateLimitResult:
+    """Count this AI request against the per-user limit, on its own
+    connection, and commit it immediately.
+
+    It used to run inside the request's single transaction, which
+    `run_pipeline` can lose: that function catches only `OpenRouterError`, so
+    any other failure — a tool raising something that is not an `AppError`,
+    say — propagates and rolls the whole transaction back, taking the
+    rate-limit increment with it. A request that fails reliably was therefore
+    free and unthrottled no matter how often it was repeated, which is the
+    opposite of what a limiter protecting a paid API should do.
+
+    `rate_limits` is a non-tenant table with no RLS policy (migration 0009),
+    so this fresh session needs no context armed.
+    """
+    async with get_sessionmaker()() as metering_session:
+        result = await ratelimit.hit_ai_user(metering_session, user_id)
+        await metering_session.commit()
+        return result
+
+
 async def start_session(session: AsyncSession, ctx: SecurityContext) -> AiSession:
     ai_session = AiSession(company_id=ctx.company_id, user_id=ctx.user_id)
     session.add(ai_session)
@@ -374,7 +396,7 @@ async def send_message(
     if not ai_enabled:
         raise AiDisabledError("AI is disabled for this company.")
 
-    rate = await ratelimit.hit_ai_user(bookkeeping_session, ctx.user_id)
+    rate = await _meter_ai_request(ctx.user_id)
     if not rate.allowed:
         raise AiRateLimitedError(
             "Too many AI messages. Please wait and try again.",

@@ -40,6 +40,7 @@ from app.core.dates import DEFAULT_DAY_CUTOFF_HOUR, business_date_for
 from app.core.errors import (
     LedgerRecordImmutableError,
     NotFoundError,
+    PermissionDeniedError,
     ProtectedFieldForbiddenError,
     ValidationFailedError,
     VersionConflictError,
@@ -58,6 +59,7 @@ from app.repositories.records import (
     find_record,
     generated_columns_for,
     get_row,
+    mark_reversed,
     soft_delete_row,
     update_row,
 )
@@ -167,14 +169,52 @@ async def _derive_business_date(
     return business_date_for(occurred_at, cutoff_hour=cutoff)
 
 
-def _derive_store_id(
-    page: Page, validated: dict[str, Any], explicit_store_id: uuid.UUID | None
+async def _resolve_store_id(
+    session: AsyncSession,
+    ctx: SecurityContext,
+    page: Page,
+    validated: dict[str, Any],
+    explicit_store_id: uuid.UUID | None,
 ) -> uuid.UUID | None:
+    """Decide which store a record belongs to, and prove the caller may say so.
+
+    A value taken from the page's own STORE_REF column has already been
+    checked against this company by `validate_references`. A bare
+    `store_id` in the request body had not been checked by anything: the RLS
+    `store_scope` policy short-circuits for an OWNER, and `tenant_isolation`
+    only constrains `company_id`, so an Owner could persist a record whose
+    `store_id` pointed at *another company's* store. For a MANAGER the RLS
+    policy did block it, but as a database error rather than a clear refusal.
+
+    So the same check STORE_REF columns already get is applied here, plus the
+    manager's own store assignment.
+
+    Both sources go through the assignment check. The first version of this
+    function returned the STORE_REF column's value immediately, before any
+    authorization — `validate_references` proves the store belongs to the
+    company, which is a different question from whether *this* manager may
+    file a record against it. A manager could therefore attribute a record to
+    any store in the company simply by setting the page's own store column
+    instead of the `store_id` field.
+    """
+    resolved = explicit_store_id
     if page.store_column_key:
         value = validated.get(page.store_column_key)
-        if value is not None:
-            return uuid.UUID(str(value))
-    return explicit_store_id
+        # An explicit `None` here means the column was cleared, and that must
+        # win over a stale `store_id` — see `update_record`.
+        resolved = uuid.UUID(str(value)) if value is not None else None
+
+    if resolved is None:
+        return None
+
+    found = await session.execute(
+        select(Store.id).where(Store.id == resolved, Store.company_id == ctx.company_id)
+    )
+    if found.scalar_one_or_none() is None:
+        raise ValidationFailedError("store_id: no such store.")
+    if not ctx.is_owner and resolved not in ctx.store_ids:
+        raise PermissionDeniedError("You are not assigned to that store.")
+    return resolved
 
 
 def validate_payload(
@@ -208,7 +248,7 @@ async def create_record(
     await validate_references(session, ctx, columns, validated)
 
     business_date = await _derive_business_date(session, ctx, page, payload.occurred_at, validated)
-    store_id = _derive_store_id(page, validated, payload.store_id)
+    store_id = await _resolve_store_id(session, ctx, page, validated, payload.store_id)
 
     handle = await create_row(
         session,
@@ -345,7 +385,12 @@ async def update_record(
         columns,
         validated=full_validated,
         occurred_at=payload.occurred_at or handle.occurred_at,
-        store_id=payload.store_id,
+        # Re-derived, not passed straight through: an edit that changes the
+        # page's own store column left `records.store_id` pointing at the old
+        # store, so a manager's RLS store scoping kept matching on stale
+        # data. This also applies the same company/assignment checks the
+        # create path does.
+        store_id=await _resolve_store_id(session, ctx, page, full_validated, payload.store_id),
         business_date=business_date,
         updated_by=ctx.user_id,
     )
@@ -418,11 +463,7 @@ async def reverse_record(
         )
 
     old_data = dict(handle.data)
-    await session.execute(
-        update(Record)
-        .where(Record.id == handle.id)
-        .values(status=RecordStatus.REVERSED, updated_by=ctx.user_id, version=handle.version + 1)
-    )
+    await mark_reversed(session, page, handle, updated_by=ctx.user_id)
     reversed_handle = await get_row(session, page, columns, handle.id, ctx.company_id)
     assert reversed_handle is not None
 

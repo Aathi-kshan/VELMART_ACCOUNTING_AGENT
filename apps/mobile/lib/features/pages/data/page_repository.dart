@@ -235,6 +235,32 @@ class PageRepository {
         await dio.delete<void>('/records/$recordId', data: {'reason': reason});
       });
 
+  /// Reverse a ledger record (`POST /records/{id}/reverse`, P4 §8).
+  ///
+  /// A `kind=LEDGER` page's records are never edited in place — the server
+  /// rejects `PATCH` on them outright — so a correction flips the original to
+  /// `REVERSED` and writes a replacement linked by `reverses_id`. The endpoint
+  /// has existed since P4 and the client already rendered the `REVERSED`
+  /// status, but nothing could ever *trigger* a reversal, so ledger
+  /// corrections were impossible from the app.
+  ///
+  /// `version` becomes the optimistic-locking check, as with [updateRecord].
+  /// Passing no [data] reverses without a replacement.
+  Future<PageRecord> reverseRecord(
+    String recordId, {
+    required int version,
+    Map<String, Object?>? data,
+  }) => mapApiErrors(() async {
+    final response = await dio.post<Map<String, dynamic>>(
+      '/records/$recordId/reverse',
+      data: {'version': version, if (data != null) 'data': data},
+    );
+    // `ReverseRecordResponse` carries `original` (now REVERSED) and an
+    // optional `replacement`. The original is what the detail screen is
+    // showing, so that is what it gets back.
+    return PageRecord.fromJson(response.data!['original'] as Map<String, dynamic>);
+  });
+
   /// The only way a protected column ever changes (plan section 11.4) —
   /// owner-only on the server. `version` becomes `If-Match`, same as
   /// [updateRecord].

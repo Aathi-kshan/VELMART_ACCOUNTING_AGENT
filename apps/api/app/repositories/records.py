@@ -38,12 +38,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Date, Numeric, cast, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql import ColumnElement
 
-from app.core.errors import ValidationFailedError
+from app.core.errors import ValidationFailedError, VersionConflictError
 from app.core.expressions.parser import parse_column_formula
 from app.core.expressions.sql_compiler import compile_formula_to_sql
 from app.core.money import format_money
@@ -208,6 +208,46 @@ def _platform_column(key: str) -> PageColumn:
     )
 
 
+#: `text -> numeric/date/boolean`, returning NULL instead of raising
+#: (migration 0024). Named rather than inlined so the SQL reads as what it is.
+_TRY_CAST = {
+    "numeric": "velmart_try_numeric",
+    "date": "velmart_try_date",
+    "boolean": "velmart_try_boolean",
+}
+
+
+def _guarded_cast(raw: ColumnElement[Any], kind: str) -> ColumnElement[Any]:
+    """Cast a JSONB text value, yielding NULL instead of raising when the
+    stored text does not fit the column's declared type.
+
+    A generic page casts `data ->> key` on *every* row, so one unconvertible
+    value failed the whole statement — and the page could no longer be
+    listed, filtered, sorted or totalled, with no way back through the API
+    because reading it is what failed.
+
+    That state is reachable through the documented workflow, not just by
+    corrupt data: `POST /columns/{id}/narrow-dry-run` is explicitly
+    informational and "never mutates or deletes anything", and
+    `PATCH /columns/{id}` with `confirm_narrow=true` then changes the
+    declared type without converting or removing the rows the dry run just
+    warned about. An Owner who accepts that warning bricked the page.
+
+    This was first written as a regex guard per type. That could not be made
+    correct: the date pattern was unanchored and range-blind, so `2024-13-01`
+    and `2024-02-30` passed the guard and still raised on `::date`, and every
+    rule added to tighten it risked rejecting a value that was genuinely
+    valid — which reads as NULL and looks like data loss. Asking Postgres
+    whether the cast works has exactly two outcomes and nothing to keep in
+    sync with reality.
+
+    A value that does not fit now reads as empty, which is how an
+    unevaluatable formula already behaves, and (with `NULLS LAST` ordering in
+    `query_service`) sorts to the end rather than disappearing.
+    """
+    return getattr(func, _TRY_CAST[kind])(raw)
+
+
 def resolve_column(
     page: Page, columns_by_key: dict[str, PageColumn], key: str
 ) -> tuple[ColumnElement[Any], PageColumn]:
@@ -245,20 +285,52 @@ def resolve_column(
 
     raw = Record.data[key].astext
     if column.data_type in (ColumnType.NUMBER, ColumnType.CURRENCY, ColumnType.PERCENT):
-        return cast(raw, Numeric), column
+        return _guarded_cast(raw, "numeric"), column
     if column.data_type in (ColumnType.DATE, ColumnType.DATETIME):
-        return cast(raw, Date), column
+        return _guarded_cast(raw, "date"), column
     if column.data_type is ColumnType.BOOLEAN:
-        return cast(raw, Boolean), column
+        return _guarded_cast(raw, "boolean"), column
     return raw, column
 
 
 def base_conditions(page: Page) -> list[ColumnElement[bool]]:
-    """The tenant/page-scoping WHERE clause every query starts from."""
+    """The tenant/page-scoping WHERE clause every query starts from.
+
+    `company_id` is asserted on both branches even though a generic page's
+    rows are already reachable only through a company-scoped `Page`, and RLS
+    is a second wall behind this. Scoping explicitly means the SQL is correct
+    on its own terms rather than correct only because of who called it.
+    """
     model = model_for(page)
     if page.storage_table:
         return [model.company_id == page.company_id, model.is_deleted.is_(False)]  # type: ignore[attr-defined]
-    return [model.page_id == page.id, model.is_deleted.is_(False)]  # type: ignore[attr-defined]
+    return [
+        model.page_id == page.id,  # type: ignore[attr-defined]
+        model.company_id == page.company_id,  # type: ignore[attr-defined]
+        model.is_deleted.is_(False),  # type: ignore[attr-defined]
+    ]
+
+
+def active_conditions(page: Page) -> list[ColumnElement[bool]]:
+    """`base_conditions` plus "this row still counts".
+
+    A record's lifecycle `status` (`app/db/base.py`'s `RecordStatus`) can be
+    VOID or REVERSED, and a reversal deliberately keeps the original row and
+    writes a correcting one beside it. Any query that produces a *number*
+    must therefore exclude non-ACTIVE rows, or a reversed entry is counted
+    twice: once as the original and once as its replacement.
+
+    This existed only inside `running_balance`, so a ledger page's running
+    balance excluded reversed rows while `sum` over the same column included
+    them — the same page reporting two different totals, with no indication
+    which was wrong.
+
+    Listing rows is different and deliberately still uses `base_conditions`:
+    a void or reversed record should stay visible in the table, carrying its
+    status, so people can see what happened rather than watching rows vanish.
+    """
+    model = model_for(page)
+    return [*base_conditions(page), model.status == RecordStatus.ACTIVE]  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------
@@ -395,6 +467,60 @@ async def find_record(
     return None
 
 
+async def _guarded_update(
+    session: AsyncSession,
+    model: type[DeclarativeBase],
+    handle: RecordHandle,
+    values: dict[str, Any],
+) -> None:
+    """Apply `values` to `handle`'s row, but only while it is still at the
+    version the caller read.
+
+    Optimistic locking has to be enforced *here*, in the WHERE clause, not by
+    comparing versions in Python beforehand. A service-layer check is
+    check-then-act: two callers both read version 3, both find it matches what
+    they were given, and both write version 4 — the second silently discarding
+    the first. The engine runs at READ COMMITTED (`app/db/session.py`), so
+    nothing else prevents that.
+
+    With `version` in the WHERE clause the database decides. Two concurrent
+    writers contend on the row lock; the loser's statement is re-evaluated
+    against the committed row, no longer matches, and updates nothing —
+    which is the 409 the caller needs to refetch and retry.
+
+    Raising from a repository is a deliberate exception to this module's
+    "never validate" rule: the conflict is only knowable from the statement's
+    own row count, so there is nothing for a caller to check afterwards.
+    """
+    # `RETURNING id` rather than `rowcount`: it asks the question directly
+    # ("did this hit a row?"), and Postgres answers it in the same round trip.
+    updated_id = await session.scalar(
+        update(model)
+        .where(
+            model.id == handle.id,  # type: ignore[attr-defined]
+            model.version == handle.version,  # type: ignore[attr-defined]
+        )
+        .values(**values)
+        .returning(model.id)  # type: ignore[attr-defined]
+    )
+    if updated_id is not None:
+        return
+
+    # Nothing matched: someone else moved the row between the caller's read
+    # and this write. Report the version they now need, when the row is
+    # still there to have one.
+    current = await session.scalar(
+        select(model.version).where(  # type: ignore[attr-defined]
+            model.id == handle.id,  # type: ignore[attr-defined]
+            model.company_id == handle.company_id,  # type: ignore[attr-defined]
+        )
+    )
+    raise VersionConflictError(
+        f"This record has changed since version {handle.version}.",
+        extra={"current_version": current} if current is not None else None,
+    )
+
+
 async def update_row(
     session: AsyncSession,
     page: Page,
@@ -434,8 +560,11 @@ async def update_row(
 
     model = model_for(page)
     if page.storage_table:
-        values.update(validated)
-        await session.execute(update(model).where(model.id == handle.id).values(**values))  # type: ignore[attr-defined]
+        # Business columns are spread *first* so the platform fields above
+        # always win. A native column keyed like one of them (`version`,
+        # `occurred_at`, `business_date`, `updated_by`) would otherwise
+        # overwrite the lock increment with client-supplied data.
+        await _guarded_update(session, model, handle, {**validated, **values})
     else:
         columns_by_key = {c.key: c for c in columns}
         wire_data = {
@@ -443,21 +572,49 @@ async def update_row(
         }
         values["data"] = wire_data
         values.update(_populate_projections(page, validated))
-        await session.execute(update(Record).where(Record.id == handle.id).values(**values))
+        await _guarded_update(session, Record, handle, values)
 
     updated = await get_row(session, page, columns, handle.id, handle.company_id)
     assert updated is not None
     return updated
 
 
+async def mark_reversed(
+    session: AsyncSession, page: Page, handle: RecordHandle, *, updated_by: uuid.UUID
+) -> None:
+    """Flip `ACTIVE -> REVERSED` under the same version guard as any other
+    write. Reversal writes a correcting record, so two callers that both
+    reverse the same row correct the books twice; the guard makes the second
+    one lose."""
+    await _guarded_update(
+        session,
+        model_for(page),
+        handle,
+        {
+            "status": RecordStatus.REVERSED,
+            "updated_by": updated_by,
+            "version": handle.version + 1,
+        },
+    )
+
+
 async def soft_delete_row(
     session: AsyncSession, page: Page, handle: RecordHandle, *, reason: str, updated_by: uuid.UUID
 ) -> None:
-    model = model_for(page)
-    await session.execute(
-        update(model)
-        .where(model.id == handle.id)  # type: ignore[attr-defined]
-        .values(is_deleted=True, deleted_reason=reason, updated_by=updated_by)
+    """A delete is a write, so it takes the same version guard and bumps
+    `version` like any other. Without the bump a delete was invisible to
+    optimistic locking: a caller holding a pre-delete handle could go on to
+    update the row it had already been told was gone."""
+    await _guarded_update(
+        session,
+        model_for(page),
+        handle,
+        {
+            "is_deleted": True,
+            "deleted_reason": reason,
+            "updated_by": updated_by,
+            "version": handle.version + 1,
+        },
     )
 
 

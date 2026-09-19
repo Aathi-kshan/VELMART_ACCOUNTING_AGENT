@@ -1,0 +1,55 @@
+# Build context exclusions.
+#
+# `infra/Dockerfile.api` does `COPY --from=builder /app/.venv /app/.venv` and
+# then `COPY apps/api/ .`. Without this file that second copy includes the
+# developer's local `apps/api/.venv` — which does not just bloat the image by
+# hundreds of megabytes, it **overwrites the virtualenv built in the builder
+# stage** with one compiled for the developer's own platform. A macOS arm64
+# venv landing on a linux image produces a container that cannot start.
+#
+# So this is a correctness file, not an optimisation.
+
+# --- virtualenvs (see above) ------------------------------------------------
+**/.venv/
+**/venv/
+
+# --- python caches ----------------------------------------------------------
+**/__pycache__/
+**/*.py[cod]
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/*.egg-info/
+
+# --- secrets — never in an image layer --------------------------------------
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# --- the Flutter client: not part of the API image --------------------------
+apps/mobile/
+
+# --- local data, backups, dumps ---------------------------------------------
+backups/
+**/*.dump
+**/*.sqlite
+**/*.sqlite3
+**/*.sql.gz
+
+# --- vcs, editors, os -------------------------------------------------------
+.git/
+.github/
+**/.DS_Store
+**/.idea/
+**/.vscode/
+**/*.swp
+
+# --- docs and design material ------------------------------------------------
+docs/
+Velmart Mobile App Design System*/
+*.md
+!apps/api/README.md

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.core.errors import ExpressionSecurityError
-from app.core.expressions.functions import FORMULA_FUNCTIONS
+from app.core.expressions.functions import FORMULA_ARITY, FORMULA_FUNCTIONS
 
 if TYPE_CHECKING:
     from app.models.page_column import PageColumn
@@ -128,6 +128,28 @@ def parse_expression(expression: str, available_names: frozenset[str]) -> Parsed
     return ParsedExpression(source=expression, tree=tree, dependencies=frozenset(dependencies))
 
 
+def _validate_arity(name: str, count: int) -> None:
+    """Reject a call with the wrong number of arguments at save time.
+
+    Both backends index into the argument list positionally, so a bad arity
+    would otherwise surface at read time as an `IndexError` or a Postgres
+    syntax error — a 500 from inside a filter or aggregate — and the two
+    backends disagreed about which calls were even wrong. See
+    `functions.FORMULA_ARITY`.
+    """
+    low, high = FORMULA_ARITY[name]
+    if count < low or (high is not None and count > high):
+        if high is None:
+            expected = f"at least {low}"
+        elif low == high:
+            expected = f"exactly {low}"
+        else:
+            expected = f"{low} to {high}"
+        raise ExpressionSecurityError(
+            f"{name}() takes {expected} argument(s), but {count} were given."
+        )
+
+
 def _validate_node(
     node: ast.AST,
     available_names: frozenset[str],
@@ -166,6 +188,7 @@ def _validate_node(
             raise ExpressionSecurityError(f"'{node.func.id}' is not a known function.")
         if node.keywords:
             raise ExpressionSecurityError("Keyword arguments are not allowed.")
+        _validate_arity(node.func.id, len(node.args))
         _validate_node(node.func, available_names, dependencies, in_call_position=True)
         for arg in node.args:
             _validate_node(arg, available_names, dependencies, in_call_position=False)

@@ -100,10 +100,6 @@ def format_sentence(entry: AuditLog, actor_name: str | None, page_name: str | No
             sentence = f"{actor} added the user '{name}'"
         case "USER_UPDATE":
             sentence = f"{actor} updated a user"
-        case "DASHBOARD_WIDGET_UPDATE":
-            sentence = f"{actor} edited a dashboard widget"
-        case "DASHBOARD_WIDGET_DELETE":
-            sentence = f"{actor} removed a dashboard widget"
         case "LOGIN":
             sentence = f"{actor} logged in"
         case "LOGIN_FAILED":

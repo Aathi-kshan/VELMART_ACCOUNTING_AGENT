@@ -324,3 +324,25 @@ class TestApplyEndpoint:
             )
         ).one()
         assert proposal_row.status == "PENDING"
+
+# A concurrent AI-apply-vs-human-edit test was attempted here and removed
+# rather than left in a form that proves nothing.
+#
+# `apply_proposal` takes the *test's* session while an HTTP PATCH runs on the
+# app's own pooled session. Both then hold a transaction on the same row, the
+# test session does not commit until the gather returns, and the two simply
+# block each other until `statement_timeout` fires. That is a limitation of
+# driving one side in-process, not a defect in the application.
+#
+# The guarantee itself is covered at both layers it is enforced in:
+#
+#   * `expected_version` in `app/ai/proposals.py` — the sequential case, by
+#     `test_stale_version_is_conflict_and_record_unchanged` above.
+#   * the version predicate in `repositories/records._guarded_update` — by
+#     `tests/test_concurrency_races.py::TestLostUpdateIsBlockedByTheDatabase`,
+#     which drives two real sessions and is what stops *any* writer, the AI
+#     apply path included, overwriting a version it did not read.
+#
+# What remains unexercised is the narrow window between those two checks, and
+# it is recorded as such in BUG_FIX_LOG.md rather than papered over with a
+# test that deadlocks.

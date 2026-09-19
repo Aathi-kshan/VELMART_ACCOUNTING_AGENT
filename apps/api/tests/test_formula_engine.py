@@ -177,27 +177,37 @@ class TestFormulaColumnEndToEnd:
         self, client: AsyncClient, owner: uuid.UUID, owner_password: str
     ) -> None:
         headers = await _owner_headers(client, owner_password)
+        # Build the page valid, then close the loop by editing one column —
+        # the same shape as `test_transitive_cycle_rejected_at_save_time`.
+        # This used to create the page with `basic + circular` already in
+        # place, which only worked because `POST /pages` did not validate
+        # FORMULA expressions at all: an expression naming a column that did
+        # not exist was accepted, and the column silently read as blank
+        # forever. `page_service.create_page` now validates them, so the
+        # cycle has to be introduced through a path that still accepts it.
         page_id = await _create_page(
             client,
             headers,
             columns=[
                 {"name": "Basic", "data_type": "CURRENCY", "is_required": True},
-                {
-                    "name": "Total",
-                    "data_type": "FORMULA",
-                    "config": {"expression": "basic + circular"},
-                },
+                {"name": "Total", "data_type": "FORMULA", "config": {"expression": "basic"}},
             ],
         )
-        resp = await _add_column(
+        circular = await _add_column(
             client,
             headers,
             page_id,
-            {
-                "name": "Circular",
-                "data_type": "FORMULA",
-                "config": {"expression": "total"},
-            },
+            {"name": "Circular", "data_type": "FORMULA", "config": {"expression": "total"}},
+        )
+        assert circular.status_code == 201, circular.text
+
+        # total -> circular -> total is a direct cycle.
+        schema = await client.get(f"/pages/{page_id}/schema", headers=headers)
+        total_column_id = next(c["id"] for c in schema.json()["columns"] if c["key"] == "total")
+        resp = await client.patch(
+            f"/columns/{total_column_id}",
+            json={"config": {"expression": "circular"}},
+            headers=headers,
         )
         assert resp.status_code == 409, resp.text
         assert resp.json()["code"] == "FORMULA_CYCLE"

@@ -89,9 +89,9 @@ PERMISSION_MATRIX: tuple[PermissionRule, ...] = (
     PermissionRule("POST", "/records/{record_id}/reverse", Access.OWNER_ONLY),
     # P5 — audit log read API (plan section 18.3)
     PermissionRule("GET", "/audit-logs/export", Access.OWNER_ONLY),
-    # P5 — dashboard widgets (plan section 15)
-    PermissionRule("PATCH", "/dashboard/widgets/{widget_id}", Access.OWNER_ONLY),
-    PermissionRule("DELETE", "/dashboard/widgets/{widget_id}", Access.OWNER_ONLY),
+    # P5 — the daily digest. The dashboard-widget endpoints that used to sit
+    # here were removed: nothing in the codebase could create a widget, so the
+    # table could only ever be empty in production.
     PermissionRule("GET", "/dashboard/digest", Access.AUTHENTICATED),
     # P7 — AI read & analysis (plan section 16.2): Owner-only at every layer,
     # a manager gets a flat 403, never a filtered response.
@@ -127,8 +127,4 @@ CONDITIONALLY_FILTERED_ENDPOINTS: tuple[tuple[str, str], ...] = (
     # P5: a manager sees only entries for pages they can view, never a plain
     # per-role allow/deny. See test_audit_read_api.
     ("GET", "/audit-logs"),
-    # P5: double-gated by `visible_to` (role) AND page view-access — see
-    # test_dashboard_widgets.
-    ("GET", "/dashboard/widgets"),
-    ("GET", "/dashboard/widgets/{widget_id}/data"),
 )

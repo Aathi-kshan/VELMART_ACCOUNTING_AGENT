@@ -59,7 +59,11 @@ async def create_record(
         request_hash = hash_request(payload.model_dump(mode="json"))
         try:
             stored = await lookup(
-                session, key=idem_key, endpoint=_CREATE_ENDPOINT, request_hash=request_hash
+                session,
+                company_id=ctx.company_id,
+                key=idem_key,
+                endpoint=_CREATE_ENDPOINT,
+                request_hash=request_hash,
             )
         except IdempotencyConflictError as exc:
             raise ConflictError(str(exc)) from exc
@@ -67,6 +71,7 @@ async def create_record(
             return RecordOut.model_validate(stored.body)
         won = await reserve(
             session,
+            company_id=ctx.company_id,
             key=idem_key,
             user_id=ctx.user_id,
             endpoint=_CREATE_ENDPOINT,
@@ -80,7 +85,11 @@ async def create_record(
 
     if idem_key:
         await store_response(
-            session, key=idem_key, status_code=201, body=out.model_dump(mode="json")
+            session,
+            company_id=ctx.company_id,
+            key=idem_key,
+            status_code=201,
+            body=out.model_dump(mode="json"),
         )
     return out
 

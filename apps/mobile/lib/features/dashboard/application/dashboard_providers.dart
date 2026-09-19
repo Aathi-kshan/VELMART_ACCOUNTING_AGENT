@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers.dart';
 import '../data/dashboard_repository.dart';
 import '../domain/reconciliation.dart';
-import '../domain/widget.dart';
 
 final dashboardRepositoryProvider = Provider<DashboardRepository>((ref) {
   final client = ref.watch(apiClientProvider);
@@ -17,17 +16,4 @@ final dashboardRepositoryProvider = Provider<DashboardRepository>((ref) {
 /// error, matching how `usersProvider` treats a manager's 403.
 final reconciliationProvider = FutureProvider<List<ReconciliationItem>>((ref) {
   return ref.watch(dashboardRepositoryProvider).getReconciliation();
-});
-
-/// Every widget the caller can see, already server-filtered (P5). Invalidate
-/// after an update/delete to refetch — `home_screen.dart` does this rather
-/// than hand-patching the list locally.
-final dashboardWidgetsProvider = FutureProvider<List<DashboardWidget>>((ref) {
-  return ref.watch(dashboardRepositoryProvider).listWidgets();
-});
-
-/// One widget's live data — keyed by id so `home_screen.dart` can watch
-/// several independently and only the one that changed re-fetches.
-final widgetDataProvider = FutureProvider.family<WidgetEvaluation, String>((ref, widgetId) {
-  return ref.watch(dashboardRepositoryProvider).getWidgetData(widgetId);
 });

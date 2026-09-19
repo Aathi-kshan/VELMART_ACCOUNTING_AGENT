@@ -167,9 +167,9 @@ schema changes are audited as heavily as data changes.
 |---|---|---|---|
 | Postgres | Railway managed backups | Daily | 30 days |
 | Postgres | Point-in-time recovery (continuous WAL) | Continuous | Per plan |
-| Postgres | `pg_dump` to the bucket via cron | Daily 02:00 SLT | 90 days |
+| Postgres | `pg_dump` via the nightly cron service | Daily 02:00 SLT (20:30 UTC) | 90 days |
 | Postgres | **Off-platform copy on the Owner's drive** | Weekly | 12 months |
-| Bucket objects | Sync to a secondary location | Weekly | 90 days |
+| Bucket objects | _Not implemented_ — `app/storage/` is an unbuilt stub | — | — |
 | Audit log | As above + nightly chain verification | — | 7 years |
 
 The off-platform weekly copy exists because "our hosting provider had a bad day" is a real risk, and
@@ -219,9 +219,18 @@ record the result in §5 below.
 
 Record every drill here. This table is the evidence that the RTO is real.
 
+Run it with `infra/scripts/restore_drill.sh`, which performs steps 1-2 and
+5-8 automatically and exits non-zero if the restored copy fails verification.
+
 | Date | Performed by | Restore source | Wall-clock time | Rows verified | Schemas verified | Chain OK | Findings |
 |---|---|---|---|---|---|---|---|
-| _(pending — required before V1 launch)_ | | | | | | | |
+| 2026-09-19 | Automated (`restore_drill.sh`), local Docker Postgres 18 | `velmart-20260919T142033Z.dump` (138 KB, 260 objects) | **3s** | 458 across 29 tables | Yes — migration head `0021` matched, all tables present with equal row counts | Yes | First drill ever performed. Both scripts were 0-byte files until this date, so no backup had ever been taken and the 4-hour RTO had never been measured. Dataset is development-sized; the 3s figure does **not** validate the RTO at production volume. |
+
+> **The measured time above is not the RTO.** It is a development database of
+> 458 rows. What the drill currently proves is that the procedure works end to
+> end and the restored copy verifies — not that it does so within four hours at
+> real volume. Re-run against a production-sized dataset before treating the
+> RTO as evidenced.
 
 ---
 
@@ -229,12 +238,22 @@ Record every drill here. This table is the evidence that the RTO is real.
 
 ### Nightly cron (`python -m app.tasks.nightly`)
 
+Deployed as a **separate Railway service** from `infra/railway.cron.json`
+(`railway up --config infra/railway.cron.json`), because Railway models a cron
+as its own service with a `cronSchedule`. Locally:
+`docker compose -f infra/docker-compose.yml run --rm nightly`.
+
+It requires `DATABASE_URL_MIGRATOR` (the schema-owning role, needed for a
+complete `pg_dump`) and `BACKUP_DIR` pointing at a mounted volume. Without
+`BACKUP_DIR` the dump is written to a temp directory and discarded on the next
+redeploy; the task logs `backup.not_persistent` when that happens.
+
 | Task | Module | Purpose |
 |---|---|---|
 | Audit chain verify | `app/tasks/audit_chain_verify.py` | Detect tampering; alert on any break |
-| `pg_dump` to bucket | `infra/scripts/backup_dump.sh` | 90-day retained logical backup |
+| `pg_dump` backup | `app/tasks/export_build.py` (`infra/scripts/backup_dump.sh` for manual runs) | 90-day retained logical backup to `BACKUP_DIR`. **Not** uploaded to a bucket — `app/storage/` is still a stub, so this is a local/volume copy only. |
 | Idempotency cleanup | `app/tasks/idempotency_cleanup.py` | Remove keys older than 48h |
-| Daily digest | `app/tasks/daily_digest.py` | Pages with no records in N days, `needs_review` records, failed imports, unsynced outboxes, chain breaks, AI spend |
+| Daily digest | `app/tasks/daily_digest.py` | Pages with no records in N days, `needs_review` records, chain breaks, AI spend. (Failed imports and unsynced outboxes are listed in older copies of this table; both features were removed.) |
 
 **Check the digest each morning.** It is the business monitor — Prometheus is unnecessary at three
 users, so the digest plus Sentry is the observability story.

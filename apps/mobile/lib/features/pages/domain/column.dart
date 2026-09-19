@@ -103,6 +103,17 @@ enum ColumnType {
   /// Only a SELECT can be marked protected (plan section 11.4).
   bool get supportsProtection => this == ColumnType.select;
 
+  /// Types an Owner may pick when defining a new column.
+  ///
+  /// Excludes ATTACHMENT. The type parses, renders and round-trips — but the
+  /// attachment endpoints were deferred and `app/routers/attachments.py` is
+  /// not mounted, so a column created with it shows "Uploading attachments is
+  /// coming soon" permanently and can never hold anything. Offering a choice
+  /// that cannot work is worse than not offering it; the value stays in the
+  /// enum so any column already carrying it still parses and displays.
+  static List<ColumnType> get selectableForNewColumn =>
+      ColumnType.values.where((t) => t != ColumnType.attachment).toList();
+
   /// Types whose `config` must carry an `options` list.
   bool get needsOptions => this == ColumnType.select || this == ColumnType.multiSelect;
 }

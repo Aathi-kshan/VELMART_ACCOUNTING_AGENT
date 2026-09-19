@@ -147,7 +147,7 @@ class _ColumnDraftDialogState extends ConsumerState<_ColumnDraftDialog> {
                   initialValue: _dataType,
                   decoration: const InputDecoration(labelText: 'Type'),
                   items: [
-                    for (final type in ColumnType.values)
+                    for (final type in ColumnType.selectableForNewColumn)
                       DropdownMenuItem(value: type, child: Text(type.label)),
                   ],
                   onChanged: (next) => setState(() => _dataType = next ?? _dataType),

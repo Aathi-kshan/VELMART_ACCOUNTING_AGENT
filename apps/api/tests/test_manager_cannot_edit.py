@@ -139,7 +139,10 @@ async def test_manager_edit_denial_is_audited(
     page_id = await _owner_creates_page_with_grant(client, owner_headers, manager)
     created = await client.post(
         f"/pages/{page_id}/records",
-        json={"occurred_at": "2026-09-02T10:00:00+05:30", "data": {"supplier_name": "Kandy Wholesale"}},
+        json={
+            "occurred_at": "2026-09-02T10:00:00+05:30",
+            "data": {"supplier_name": "Kandy Wholesale"},
+        },
         headers=owner_headers,
     )
     record = created.json()
@@ -177,7 +180,10 @@ async def test_owner_can_edit_the_same_record_a_manager_was_blocked_from(
     page_id = await _owner_creates_page_with_grant(client, owner_headers, manager)
     created = await client.post(
         f"/pages/{page_id}/records",
-        json={"occurred_at": "2026-09-02T10:00:00+05:30", "data": {"supplier_name": "Prime Traders"}},
+        json={
+            "occurred_at": "2026-09-02T10:00:00+05:30",
+            "data": {"supplier_name": "Prime Traders"},
+        },
         headers=owner_headers,
     )
     record = created.json()

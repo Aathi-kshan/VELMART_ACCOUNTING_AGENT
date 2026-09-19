@@ -7,13 +7,53 @@ COPY apps/api/pyproject.toml apps/api/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 FROM python:3.13-slim AS runtime
+
+# `postgresql-client-18` is required, not optional, and the version matters.
+#
+# `app/tasks/export_build.py` shells out to `pg_dump` for the nightly backup,
+# and `infra/scripts/` uses `pg_dump`/`pg_restore`/`psql` for the backup and
+# restore drill. The image previously shipped with none of them, so the backup
+# task could only ever have failed with "pg_dump not found" — its own
+# docstring claimed it resolved `pg_dump` "via PATH (as the Docker image
+# provides it)", which was untrue.
+#
+# Debian's own `postgresql-client` is 17, and the server is 18. `pg_dump`
+# refuses outright to dump a server newer than itself ("aborting because of
+# server version mismatch"), so installing the distribution package trades a
+# "not found" failure for a version failure. The PostgreSQL project's own apt
+# repository is what provides a matching client.
+ARG PG_MAJOR=18
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ca-certificates curl gnupg \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y "postgresql-client-${PG_MAJOR}" \
+    && apt-get purge -y gnupg \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN adduser --system --group --no-create-home appuser
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 COPY --from=builder /app/.venv /app/.venv
+# See /.dockerignore — without it this line copies the developer's local
+# apps/api/.venv straight over the one built above.
 COPY apps/api/ .
 USER appuser
 EXPOSE 8000
+
+# Container-level liveness, independent of the platform's own healthcheck.
+# `/health` is the cheap one (no database round trip); `/health/ready` is what
+# Railway gates traffic on, since it also compares the schema's
+# `alembic_version` against the build's expected head.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

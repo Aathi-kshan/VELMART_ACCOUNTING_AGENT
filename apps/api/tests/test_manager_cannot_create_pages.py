@@ -57,7 +57,10 @@ async def test_manager_cannot_create_a_page(
 
     rows = (
         await session.execute(
-            text("SELECT count(*) FROM pages WHERE company_id = :cid AND key = 'supplier_contacts'"),
+            text(
+                "SELECT count(*) FROM pages "
+                "WHERE company_id = :cid AND key = 'supplier_contacts'"
+            ),
             {"cid": str(company)},
         )
     ).scalar_one()
@@ -105,7 +108,11 @@ async def test_manager_page_creation_denial_is_audited(
     headers = await _manager_headers(client, manager_password)
     resp = await client.post(
         "/pages",
-        json={"name": "Denied Page", "kind": "REGISTER", "columns": [{"name": "X", "data_type": "TEXT"}]},
+        json={
+            "name": "Denied Page",
+            "kind": "REGISTER",
+            "columns": [{"name": "X", "data_type": "TEXT"}],
+        },
         headers=headers,
     )
     assert resp.status_code == 403

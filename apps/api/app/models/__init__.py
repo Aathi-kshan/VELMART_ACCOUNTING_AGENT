@@ -16,7 +16,6 @@ from app.models.business import (
 )
 from app.models.company import Company, CompanySettings
 from app.models.daily_digest import DailyDigest
-from app.models.dashboard_widget import DashboardWidget
 from app.models.page import Page, PageKind
 from app.models.page_access import PageAccess
 from app.models.page_column import ColumnType, PageColumn
@@ -46,7 +45,6 @@ __all__ = [
     "Company",
     "CompanySettings",
     "DailyDigest",
-    "DashboardWidget",
     "Page",
     "PageKind",
     "PageAccess",

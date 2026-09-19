@@ -151,24 +151,35 @@ class TestChainVerify:
 
 class TestIdempotencyCleanup:
     async def test_deletes_rows_older_than_48h_and_keeps_recent_ones(
-        self, owner: uuid.UUID, session: AsyncSession
+        self, company: uuid.UUID, owner: uuid.UUID, session: AsyncSession
     ) -> None:
+        # `company_id` is part of the primary key since migration 0017 —
+        # keys are scoped per tenant, not globally unique.
         old_key, recent_key = str(uuid.uuid4()), str(uuid.uuid4())
         old_time = datetime.now(tz=UTC) - timedelta(hours=72)
         recent_time = datetime.now(tz=UTC) - timedelta(hours=1)
-        await session.execute(
-            text(
-                "INSERT INTO idempotency_keys (key, user_id, endpoint, request_hash, created_at) "
-                "VALUES (:key, :uid, '/test', 'hash', :created_at)"
-            ),
-            {"key": old_key, "uid": str(owner), "created_at": old_time},
+        insert_key = text(
+            "INSERT INTO idempotency_keys "
+            "(company_id, key, user_id, endpoint, request_hash, created_at) "
+            "VALUES (:company_id, :key, :uid, '/test', 'hash', :created_at)"
         )
         await session.execute(
-            text(
-                "INSERT INTO idempotency_keys (key, user_id, endpoint, request_hash, created_at) "
-                "VALUES (:key, :uid, '/test', 'hash', :created_at)"
-            ),
-            {"key": recent_key, "uid": str(owner), "created_at": recent_time},
+            insert_key,
+            {
+                "company_id": str(company),
+                "key": old_key,
+                "uid": str(owner),
+                "created_at": old_time,
+            },
+        )
+        await session.execute(
+            insert_key,
+            {
+                "company_id": str(company),
+                "key": recent_key,
+                "uid": str(owner),
+                "created_at": recent_time,
+            },
         )
         await session.commit()
 

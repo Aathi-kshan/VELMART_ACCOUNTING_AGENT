@@ -321,6 +321,34 @@ async def refresh(
     if user is None or not user.is_active:
         raise RefreshTokenError("Invalid refresh token.")
 
+    # Claim the token before minting anything. Reading `revoked_at` above and
+    # revoking it at the end would be check-then-act: two requests presenting
+    # the same token both see it live, both mint a pair, and one token yields
+    # two live families — and because each marks the row revoked itself,
+    # neither is ever seen as a replay, so the reuse detection above never
+    # fires for a genuinely stolen token.
+    #
+    # This UPDATE decides the winner in the database. It takes the row lock,
+    # so a concurrent request blocks here and then finds `revoked_at` already
+    # set, matches no row, and gets nothing back. If this request fails later
+    # the whole transaction rolls back, releasing the claim.
+    claimed = await session.scalar(
+        update(RefreshToken)
+        .where(RefreshToken.id == stored.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+        .returning(RefreshToken.id)
+    )
+    if claimed is None:
+        # Another request rotated this token while we were validating it. We
+        # cannot tell a client retrying after a network flake from an
+        # attacker racing the real user, so this fails closed without
+        # revoking the family: whichever caller lost simply has no valid
+        # token. A later replay of this same value still lands on the
+        # reuse-detection path above, which is where a stolen token is
+        # supposed to be caught.
+        log.warning("auth.refresh_lost_race", user_id=str(stored.user_id))
+        raise RefreshTokenError("Invalid refresh token.")
+
     pair = await _issue_tokens(
         session, user, device_id=stored.device_id, device_name=stored.device_name
     )
@@ -333,7 +361,7 @@ async def refresh(
     await session.execute(
         update(RefreshToken)
         .where(RefreshToken.id == stored.id)
-        .values(revoked_at=now, replaced_by=new_result.scalar_one())
+        .values(replaced_by=new_result.scalar_one())
     )
     log.info("auth.refresh_ok", user_id=str(user.id))
     await session.commit()

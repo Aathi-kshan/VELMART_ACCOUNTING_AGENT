@@ -33,3 +33,7 @@ bool canManageStores(UserRole role) => role == UserRole.owner;
 bool canManageSettings(UserRole role) => role == UserRole.owner;
 
 bool canExportAuditLog(UserRole role) => role == UserRole.owner;
+
+/// Reversing a ledger entry is Owner-only, matching
+/// `POST /records/{id}/reverse`'s `require_owner` on the server.
+bool canReverseRecord(UserRole role) => role == UserRole.owner;

@@ -47,5 +47,37 @@ services:
     #   docker compose -f infra/docker-compose.yml run --rm api alembic upgrade head
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
+  # The nightly maintenance job — audit chain verify, pg_dump backup,
+  # idempotency cleanup, daily digest. In production this runs as a Railway
+  # cron service (infra/railway.cron.json); here it is a one-shot so the job
+  # can actually be exercised locally instead of only ever running unattended
+  # in an environment nobody watches. Nothing scheduled it anywhere before
+  # this pass, so it had never run at all.
+  #
+  #   docker compose -f infra/docker-compose.yml run --rm nightly
+  #
+  # Behind a profile so `up` does not start it as a long-running service.
+  nightly:
+    profiles: ["ops"]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql://velmart:velmart@postgres:5432/velmart
+      # pg_dump needs the schema-owning role, not app_user.
+      DATABASE_URL_MIGRATOR: postgresql://velmart:velmart@postgres:5432/velmart
+      JWT_SECRET_KEY: local-development-only-not-a-real-secret-change-me-please
+      # A mounted directory, not /tmp — otherwise the dump dies with the
+      # container and the backup is a no-op that reports success.
+      BACKUP_DIR: /backups
+    volumes:
+      - ../backups:/backups
+    command: ["python", "-m", "app.tasks.nightly"]
+
 volumes:
   postgres_data:

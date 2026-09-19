@@ -5,7 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import AppError
+from app.config import get_settings
+from app.core.errors import AppError, RateLimitedError
 from app.core.ratelimit import hit_login_ip
 from app.db.session import get_session
 from app.dependencies.auth import current_user
@@ -29,13 +30,30 @@ class InvalidCredentialsError(AppError):
     title = "Invalid credentials"
 
 
-class RateLimitedError(AppError):
-    status_code = status.HTTP_429_TOO_MANY_REQUESTS
-    code = "RATE_LIMITED"
-    title = "Too many requests"
-
-
 def _client_ip(request: Request) -> str:
+    """The address to rate-limit a login attempt against.
+
+    Behind a reverse proxy every request arrives from the proxy, so keying on
+    `request.client.host` alone put the **entire deployment** into one bucket:
+    five failed logins from anyone locked out every user, and the per-attacker
+    limit disappeared entirely. Railway terminates TLS in front of the app, so
+    that is the deployed shape.
+
+    `X-Forwarded-For` is attacker-controlled, though, and trusting it blindly
+    is worse than ignoring it — a client can then forge a fresh IP per request
+    and never be limited at all. So it is only consulted when
+    `TRUSTED_PROXY_HOPS` says how many proxies actually sit in front of this
+    app, and the value read is the one *that* proxy appended, counting from
+    the right. Default 0: trust nothing, behave exactly as before.
+    """
+    hops = get_settings().TRUSTED_PROXY_HOPS
+    if hops > 0:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            chain = [part.strip() for part in forwarded.split(",") if part.strip()]
+            if chain:
+                # One trusted hop -> the last entry is the peer it saw.
+                return chain[-min(hops, len(chain))]
     return request.client.host if request.client else "unknown"
 
 

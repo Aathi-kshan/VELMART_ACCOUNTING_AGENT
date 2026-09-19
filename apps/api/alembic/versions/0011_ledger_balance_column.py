@@ -14,6 +14,7 @@ only `kind = LEDGER` pages are expected to set it, and nothing else reads it.
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0011"

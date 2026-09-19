@@ -33,12 +33,17 @@ dependencies:
   # int minor units must never round-trip through a locale parser.
   intl: ^0.19.0
 
-  # Offline cache (P6) — declared now per the locked stack, unused until then
-  drift: ^2.22.1
-  sqlite3_flutter_libs: ^0.5.28
-
-  # Dashboard charts (P5)
-  fl_chart: ^0.69.2
+  # Removed here, all three unused and all three costly to keep:
+  #
+  #   drift / sqlite3_flutter_libs — declared for an offline cache (P6) that
+  #     was cut from scope. Nothing in lib/ or test/ ever imported them, but
+  #     `sqlite3_flutter_libs` is a *native* plugin, so it was still compiled
+  #     into the generated macOS/iOS SwiftPM package and dragged into every
+  #     native build for no benefit.
+  #   fl_chart — declared for the dashboard-widget charts. That feature is
+  #     removed (nothing could ever create a widget), and no file imported it.
+  #
+  # `share_plus` below is genuinely used by the CSV export and stays.
 
   # CSV export (plan section 13.2, P3.5 Part 2) — hands the exported file to
   # the OS share sheet (Save to Files, AirDrop, email, ...) rather than
@@ -59,7 +64,6 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   riverpod_generator: ^2.6.3
   build_runner: ^2.4.13
-  drift_dev: ^2.22.1
   mocktail: ^1.0.4
 
 flutter:
