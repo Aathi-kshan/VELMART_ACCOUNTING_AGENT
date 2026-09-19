@@ -12,6 +12,7 @@ import io
 import uuid
 
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _login(client: AsyncClient, email: str, password: str) -> str:
@@ -123,8 +124,8 @@ async def test_manager_cannot_export(
 
 
 async def test_export_writes_an_audit_entry(
-    client: AsyncClient, owner: uuid.UUID, owner_password: str, session
-) -> None:  # noqa: ANN001
+    client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
+) -> None:
     from sqlalchemy import text
 
     headers = await _owner_headers(client, owner_password)

@@ -12,6 +12,7 @@ an ordinary Owner-created page with an Owner-defined protected column.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from httpx import AsyncClient
 
@@ -31,7 +32,7 @@ async def _owner_headers(client: AsyncClient, owner_password: str) -> dict[str, 
 
 async def _create_cheque(
     client: AsyncClient, headers: dict[str, str], page_id: str
-) -> dict[str, object]:
+) -> dict[str, Any]:
     resp = await client.post(
         f"/pages/{page_id}/records",
         json={
@@ -123,7 +124,7 @@ class TestGenericPageProtectedColumn:
 
     async def _create_record(
         self, client: AsyncClient, headers: dict[str, str], page_id: str
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         resp = await client.post(
             f"/pages/{page_id}/records",
             json={

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.usefixtures("owner")
 
 async def _login(
     client: AsyncClient, email: str, password: str, device: str = "test-device"
-):
+) -> Response:
     return await client.post(
         "/auth/login",
         json={"email": email, "password": password, "device_id": device},

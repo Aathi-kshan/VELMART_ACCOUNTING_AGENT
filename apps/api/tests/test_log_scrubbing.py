@@ -13,10 +13,14 @@ The key list was also short on personal data: no `email`, `phone`, `nic`
 
 from __future__ import annotations
 
+from typing import Any
+
+import structlog
+
 from app.core.logging import REDACTED, _scrub
 
 
-def scrub(event: dict) -> dict:
+def scrub(event: dict[str, Any]) -> structlog.types.EventDict:
     return _scrub(None, "info", event)
 
 

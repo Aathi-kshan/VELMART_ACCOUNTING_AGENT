@@ -25,12 +25,24 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx import AsyncClient, Response
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+
+if TYPE_CHECKING:
+    # Every app.* import in this file is deferred to inside its function —
+    # `conftest.py`'s `_settings` autouse fixture must set DATABASE_URL etc.
+    # before app.config is first imported, and a module-level import would
+    # run at collection time, before any fixture does. TYPE_CHECKING-only
+    # imports never execute, so they give mypy the names below without
+    # disturbing that ordering.
+    from app.models.page import Page
+    from app.models.page_column import PageColumn
+    from app.repositories.records import RecordHandle
 
 #: Enough concurrent writers that the read-then-write window is hit
 #: reliably, few enough to stay fast. All of them send the *same* starting
@@ -107,9 +119,9 @@ async def _armed_session(app_user_url: str, company_id: uuid.UUID) -> AsyncItera
         await engine.dispose()
 
 
-async def _load_for_update(  # noqa: ANN201
+async def _load_for_update(
     session: AsyncSession, page_id: str, record_id: str, company_id: uuid.UUID
-):
+) -> tuple[Page, list[PageColumn], RecordHandle]:
     """Page, live columns and row handle — what `record_service._locate`
     hands to `update_row`."""
     from app.models.page import Page

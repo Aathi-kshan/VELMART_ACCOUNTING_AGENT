@@ -18,6 +18,7 @@ caller forge a fresh IP per request and evade the limit completely. Hence
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 
 import pytest
 from httpx import AsyncClient
@@ -26,7 +27,7 @@ from app.config import get_settings
 
 
 @pytest.fixture(autouse=True)
-def _restore_settings():  # noqa: ANN202
+def _restore_settings() -> Iterator[None]:
     """These tests change settings, which are cached process-wide."""
     yield
     get_settings.cache_clear()

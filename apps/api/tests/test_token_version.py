@@ -5,6 +5,8 @@ effect immediately rather than waiting for the token to expire.
 
 from __future__ import annotations
 
+import uuid
+
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class TestTokenVersion:
     async def test_valid_token_works_before_any_bump(
-        self, client: AsyncClient, owner, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
     ) -> None:
         pair = (
             await client.post(
@@ -31,7 +33,7 @@ class TestTokenVersion:
         assert resp.status_code == 200
 
     async def test_bumped_version_invalidates_an_unexpired_token(
-        self, client: AsyncClient, owner, owner_password: str, session: AsyncSession
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         pair = (
             await client.post(

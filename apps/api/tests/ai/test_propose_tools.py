@@ -14,6 +14,7 @@ from decimal import Decimal
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.tools.propose_tools import (
@@ -85,7 +86,7 @@ async def staff_page(client: AsyncClient, owner: uuid.UUID, owner_password: str)
     return page
 
 
-async def _proposal_row(session: AsyncSession, proposal_id: str) -> object:
+async def _proposal_row(session: AsyncSession, proposal_id: str) -> Row:
     return (
         await session.execute(
             text("SELECT status, expires_at, session_id FROM ai_proposals WHERE id = :id"),
@@ -94,7 +95,7 @@ async def _proposal_row(session: AsyncSession, proposal_id: str) -> object:
     ).one()
 
 
-async def _proposal_item_row(session: AsyncSession, proposal_id: str) -> object:
+async def _proposal_item_row(session: AsyncSession, proposal_id: str) -> Row:
     return (
         await session.execute(
             text(

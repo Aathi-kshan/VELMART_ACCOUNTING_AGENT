@@ -14,9 +14,11 @@ That instruction was the one that mattered. **The suite was green and the
 system had confirmed data-integrity defects**, including one that silently lost
 writes in an accounting application.
 
-**58 defects were found and fixed**, each pinned by a test that fails without
+**60 defects were found and fixed**, each pinned by a test that fails without
 the fix. Seven of those were introduced *by the remediation itself* and caught
-by re-auditing it — recorded as such rather than quietly corrected.
+by re-auditing it — recorded as such rather than quietly corrected. The last
+two closed two of this report's own "would block a release" findings (R1, the
+CI gate; R2, `mypy`'s coverage of `tests/`) after the initial 58-defect pass.
 
 The five that mattered most:
 
@@ -51,7 +53,7 @@ All figures below were produced on this machine, on the final code.
 |---|---|---|
 | Backend tests | `uv run pytest -q` | **724 passed**, 3 deselected (`slow`) |
 | Backend lint | `uv run ruff check app/ alembic/ tests/` | **clean** |
-| Backend types | `uv run mypy app/` | **clean**, 123 files |
+| Backend types | `uv run mypy app/ alembic/ tests/` | **clean**, 221 files |
 | Migration chain | `alembic heads` | **single head `0024`** |
 | Migration round-trip | fresh DB → head → base → head | **clean**, 24 up / 24 down / 24 up |
 | Flutter tests | `flutter test` | **150 passed** |
@@ -121,7 +123,7 @@ Nothing below is fixed. All of it is in `BUG_FIX_LOG.md` with detail.
 | # | Issue |
 |---|---|
 | R1 | ~~CI was never updated~~ — **closed.** `.github/workflows/api-ci.yml` gained `uv lock --check`, `mypy app/ alembic/` (was `app/` only), and a new `migrations` job: a plain Postgres 18 service that asserts exactly one head then runs `upgrade head` → `downgrade base` → `upgrade head` on a genuinely fresh database. `mobile-ci.yml`'s dead "skip if no pubspec" guard is removed — `apps/mobile` has been a real app since P1, and the guard meant deleting `pubspec.yaml` would have reported green having run nothing. Both steps were exercised locally against a fresh container with the exact commands CI now runs before being wired in; see BUG_FIX_LOG.md #59. |
-| R2 | **`mypy tests/` has 41 pre-existing errors** across 16 files, which is why `tests/` is still outside the type gate. `alembic/` is now in the gate (R1) — it was already clean. |
+| R2 | ~~`mypy tests/` has 41 pre-existing errors~~ — **closed.** 39 errors across 15 files were fixed (mostly missing parameter/return annotations; a handful were real gaps — two `SELECT ... .one()` helpers untyped as `object` instead of SQLAlchemy `Row`, a `build_provenance` union return used without narrowing, a dynamically-built Pydantic class used as a type-subscript variable mypy can't resolve). One config fix went with them: `mypy tests/` in isolation raised "source file found twice under different module names" — `tests/ai/test_golden_questions.py` imports a sibling by its fully-qualified `tests.ai.` path, and with no `__init__.py` anywhere in `tests/`, that import path and the directory-walk path disagreed on the file's module name. Fixed with `mypy_path`/`explicit_package_bases` in `pyproject.toml`, not a CLI flag, so a developer running plain `mypy tests/` gets the same clean result CI does. `mypy app/ alembic/ tests/` now covers all 221 source files with zero errors, and CI runs exactly that. |
 | R3 | **Backups are local-only.** `app/storage/` is an unbuilt stub, so the dump lands on a mounted volume and is never shipped off-platform. The RUNBOOK's "off-platform copy" line is now marked not-implemented rather than claimed. |
 | R4 | **The restore drill's 3s is not the RTO.** It was measured against a 458-row development database. Re-run against production-sized data before treating the 4-hour RTO as evidenced. |
 
@@ -165,16 +167,15 @@ place:
 
 1. ~~CI does not gate what now matters~~ — **closed** (R1). The migration
    round-trip, single-head check, and `uv lock --check` are now enforced on
-   every push; `mypy` covers `alembic/`.
+   every push, and `mypy` covers `app/`, `alembic/` and `tests/` together (R2).
 2. **Backups exist but never leave the machine** (R3). A verified local dump is
    most of the work and none of the insurance.
 3. **The RTO is still unevidenced** (R4).
 4. **The client cannot be built for its target platform here** (§5), so no
    end-to-end verification on a real device has been possible.
 
-R2 (41 pre-existing `mypy` errors in `tests/`) is a short focused change; R3
-needs the storage layer; R4 needs one run against realistic data. With those
-closed and a device build verified somewhere with a working Xcode, the
+R3 needs the storage layer; R4 needs one run against realistic data. With
+those closed and a device build verified somewhere with a working Xcode, the
 assessment becomes READY.
 
 **What I would not ship without:** R3 and R4 — the two operational blockers

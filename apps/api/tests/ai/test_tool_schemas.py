@@ -13,6 +13,8 @@ plan names explicitly.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from pydantic import BaseModel
 
@@ -27,7 +29,7 @@ from app.core.context import SecurityContext
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry():
+def _clean_registry() -> Iterator[None]:
     """Tools register themselves into a module-level dict at import time;
     isolate each test from whatever other tests have registered."""
     saved = dict(TOOL_REGISTRY)
@@ -246,11 +248,20 @@ class TestForbiddenFieldsAreCheckedAtEveryDepth:
     def test_a_legitimately_nested_model_is_still_accepted(self) -> None:
         """The check must not reject ordinary nesting — every read tool uses
         it."""
-        nested = type(
-            "SafeNested", (BaseModel,), {"__annotations__": {"column": str, "value": str}}
-        )
+
+        class SafeNested(BaseModel):
+            column: str
+            value: str
+
+        # `list[SafeNested]`, not stored through an intermediate variable and
+        # subscripted (`list[nested]`): mypy tries to statically evaluate a
+        # `list[...]` subscript as a type expression, and a class held in a
+        # variable built by `type(...)` isn't something it can resolve as a
+        # type alias. A real class statement sidesteps that; the outer model
+        # still has to be built dynamically since its field name varies
+        # across tests, which is the actual thing under test.
         params = type(
-            "SafeOuter", (BaseModel,), {"__annotations__": {"filters": list[nested]}}
+            "SafeOuter", (BaseModel,), {"__annotations__": {"filters": list[SafeNested]}}
         )
 
         tool = register_tool(

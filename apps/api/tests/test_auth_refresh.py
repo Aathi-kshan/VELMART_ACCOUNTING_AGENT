@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +20,7 @@ async def _login(client: AsyncClient, email: str, password: str) -> dict:
 
 class TestRotation:
     async def test_refresh_issues_a_new_pair(
-        self, client: AsyncClient, owner, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
     ) -> None:
         first = await _login(client, "owner@test.lk", owner_password)
 
@@ -31,7 +33,7 @@ class TestRotation:
         assert second["access_token"] != first["access_token"]
 
     async def test_old_token_is_revoked_and_linked(
-        self, client: AsyncClient, owner, owner_password: str, session: AsyncSession
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         first = await _login(client, "owner@test.lk", owner_password)
         await client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
@@ -48,7 +50,7 @@ class TestRotation:
         assert row.replaced_by is not None
 
     async def test_new_access_token_still_works(
-        self, client: AsyncClient, owner, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
     ) -> None:
         first = await _login(client, "owner@test.lk", owner_password)
         refreshed = (
@@ -66,7 +68,7 @@ class TestRotation:
 
 class TestReplayDetection:
     async def test_replaying_a_rotated_token_is_refused(
-        self, client: AsyncClient, owner, owner_password: str
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str
     ) -> None:
         first = await _login(client, "owner@test.lk", owner_password)
         await client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
@@ -79,7 +81,7 @@ class TestReplayDetection:
         assert replay.status_code == 401
 
     async def test_replay_revokes_the_whole_device_family(
-        self, client: AsyncClient, owner, owner_password: str, session: AsyncSession
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         first = await _login(client, "owner@test.lk", owner_password)
         second_resp = await client.post(
@@ -110,7 +112,7 @@ class TestReplayDetection:
         assert resp.status_code == 401
 
     async def test_replay_is_audited(
-        self, client: AsyncClient, owner, owner_password: str, session: AsyncSession
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         first = await _login(client, "owner@test.lk", owner_password)
         await client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
@@ -130,7 +132,7 @@ class TestInvalidTokens:
         assert resp.status_code == 401
 
     async def test_expired_token_is_refused(
-        self, client: AsyncClient, owner, owner_password: str, session: AsyncSession
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         pair = await _login(client, "owner@test.lk", owner_password)
         await session.execute(
@@ -146,7 +148,7 @@ class TestInvalidTokens:
 
 class TestLogout:
     async def test_logout_revokes_the_token(
-        self, client: AsyncClient, owner, owner_password: str, session: AsyncSession
+        self, client: AsyncClient, owner: uuid.UUID, owner_password: str, session: AsyncSession
     ) -> None:
         pair = await _login(client, "owner@test.lk", owner_password)
 

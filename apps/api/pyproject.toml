@@ -82,6 +82,16 @@ plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
 warn_redundant_casts = true
 disallow_untyped_defs = true
+# `tests/` and `tests/ai/` have no `__init__.py` (deliberately — pytest
+# collects them as namespace packages), so without this, running
+# `mypy tests/` finds tests/ai/test_injection_defence.py twice under two
+# different module names: once by walking the tests/ directory tree given
+# on the command line, and once via test_golden_questions.py's
+# `from tests.ai.test_injection_defence import ...`, which only resolves
+# relative to apps/api itself. `mypy_path` gives both discovery paths the
+# same root, so they agree on one name.
+mypy_path = "."
+explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = ["boto3.*", "botocore.*"]

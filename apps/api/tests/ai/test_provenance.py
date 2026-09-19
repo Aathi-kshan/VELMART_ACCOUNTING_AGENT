@@ -34,6 +34,10 @@ class TestProvenanceForAggregate:
 
         provenance = build_provenance("aggregate_records", result)
 
+        # `aggregate_records` always yields a single Provenance, never a
+        # list — narrowing what `build_provenance`'s own signature widens to
+        # `Provenance | list[Provenance]` for the search-across-pages case.
+        assert isinstance(provenance, Provenance)
         assert provenance.date_from is None
         assert provenance.date_to is None
 
@@ -73,6 +77,7 @@ class TestProvenanceForRecords:
 
         provenance = build_provenance("sort_records", result)
 
+        assert isinstance(provenance, Provenance)
         assert provenance.record_count == 1
 
 

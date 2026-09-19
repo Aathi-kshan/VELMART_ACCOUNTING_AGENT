@@ -22,8 +22,12 @@ class TestFloatIsRejected:
             parse_money(35000.0)  # type: ignore[arg-type]
 
     def test_bool_is_not_money(self) -> None:
+        # `bool` type-checks as `int` (it's a subtype), so this is a runtime
+        # rejection only — `parse_money`'s own isinstance check special-cases
+        # it (app/core/money.py), not something mypy can see from the
+        # signature alone.
         with pytest.raises(MoneyError):
-            parse_money(True)  # type: ignore[arg-type]
+            parse_money(True)
 
 
 class TestRounding:

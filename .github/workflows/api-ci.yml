@@ -39,7 +39,7 @@ jobs:
         run: uv run ruff check app/ alembic/ tests/
 
       - name: Type check (mypy)
-        run: uv run mypy app/ alembic/
+        run: uv run mypy app/ alembic/ tests/
 
       - name: Test (real Postgres via testcontainers)
         run: uv run pytest -q

@@ -31,7 +31,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from testcontainers.community.postgres import PostgresContainer
 
 API_ROOT = Path(__file__).resolve().parents[1]
@@ -103,7 +108,7 @@ def _settings(app_user_url: str, ai_reader_url: str) -> Iterator[None]:
 
 
 @pytest.fixture
-async def engine(postgres_url: str) -> AsyncIterator[object]:
+async def engine(postgres_url: str) -> AsyncIterator[AsyncEngine]:
     from app.config import to_asyncpg_url
 
     eng = create_async_engine(to_asyncpg_url(postgres_url), poolclass=None)
@@ -112,7 +117,7 @@ async def engine(postgres_url: str) -> AsyncIterator[object]:
 
 
 @pytest.fixture
-async def session(engine) -> AsyncIterator[AsyncSession]:  # noqa: ANN001
+async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
         yield s
@@ -150,7 +155,7 @@ async def ai_reader_session(ai_reader_url: str) -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture(autouse=True)
-async def _clean_tables(engine) -> AsyncIterator[None]:  # noqa: ANN001
+async def _clean_tables(engine: AsyncEngine) -> AsyncIterator[None]:
     """Empty every table between tests.
 
     `audit_logs` has UPDATE/DELETE revoked from app_user, but tests connect as

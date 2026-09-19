@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _login(client: AsyncClient, email: str, password: str) -> str:
@@ -74,7 +75,7 @@ async def test_editing_a_system_page_column_is_rejected(
     client: AsyncClient,
     owner: uuid.UUID,
     owner_password: str,
-    session,  # noqa: ANN001
+    session: AsyncSession,
     system_page_ids: dict[str, str],
 ) -> None:
     from sqlalchemy import text

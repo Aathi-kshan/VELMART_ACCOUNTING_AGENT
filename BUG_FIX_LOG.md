@@ -988,9 +988,71 @@ have made this workflow report green having run zero checks.
 upgrade→downgrade→upgrade sequence against a fresh throwaway Postgres 18
 container, matching what the new job does. All clean.
 
-**Deliberately not done in this round:** `mypy tests/` still has 41
+**Deliberately not done in this round:** `mypy tests/` still had 41
 pre-existing errors across 16 files (unrelated to anything in this audit) and
-is not yet in the gate — see "Still open" below.
+was not yet in the gate. Closed in Round 9, immediately below.
+
+---
+
+## Round 9 — closing R2 (`mypy tests/`)
+
+### 60. `mypy tests/` had 39 pre-existing errors, and couldn't even run cleanly alone — R2
+
+Round 8 added `tests/` to the plan for the type gate and then deliberately
+left it out: 41 reported errors (39 once actually counted with
+`--explicit-package-bases`, across 15 files) with nothing in this audit
+depending on them being fixed first.
+
+Most were mechanical — missing parameter or return-type annotations on test
+functions and fixtures (`owner` fixtures typed bare instead of `uuid.UUID`,
+generator fixtures with no `Iterator[None]`/`AsyncIterator[None]`, one helper
+returning a bare `Response` untyped). A handful were real gaps worth naming:
+
+- **Two `SELECT ... .one()` helpers in `tests/ai/test_propose_tools.py`
+  were typed `-> object`**, so every `.status`/`.operation`/`.before_data`
+  attribute access on their result failed to type-check. The right type —
+  SQLAlchemy's `Row`, already used the same way in `test_audit_logging.py` —
+  fixed all ten errors that traced back to it in one change.
+- **`test_provenance.py` used `build_provenance`'s `Provenance | list[Provenance]`
+  return without narrowing.** The test knows `aggregate_records`/`sort_records`
+  always yield a single `Provenance`, not a list; mypy doesn't, without an
+  `isinstance` assert to say so.
+- **A dynamically-built Pydantic class held in a variable was subscripted as
+  `list[nested]`** in a nested-schema test. mypy tries to statically resolve
+  `X[...]` subscripts as type expressions, and a class built at runtime via
+  `type(...)` and stored in a local isn't something it can resolve that way.
+  Replaced with a real `class SafeNested(BaseModel):` statement, which mypy
+  can see as an actual type — same runtime behaviour, no special-casing needed.
+- **`_scrub`'s test wrapper declared `-> dict`** where the function actually
+  returns `structlog.types.EventDict` (a `MutableMapping[str, Any]`, not a
+  `dict`). Retyped to match.
+- **One `# type: ignore[arg-type]` was masking nothing.** `parse_money(True)`
+  type-checks fine — `bool` is an `int` subtype, and the signature accepts
+  `int` — the rejection is a runtime `isinstance` special-case
+  (`app/core/money.py`), not something the type signature was ever going to
+  catch. Removed and replaced with a comment saying why.
+
+**The config fix, not just the code fixes.** `mypy tests/` run in isolation
+raised "Source file found twice under different module names" on
+`tests/ai/test_injection_defence.py` — unrelated to any of the above.
+`tests/ai/test_golden_questions.py` imports it via
+`from tests.ai.test_injection_defence import ADVERSARIAL_STRINGS`, a
+fully-qualified path resolvable only relative to `apps/api` itself. Neither
+`tests/` nor `tests/ai/` has an `__init__.py` (deliberate — pytest collects
+them as namespace packages), so mypy's directory walk starting at `tests/`
+and its resolution of that import disagreed on the file's module name.
+`--explicit-package-bases` on the command line papers over it; fixed properly
+with `mypy_path = "."` and `explicit_package_bases = true` in
+`pyproject.toml`, so a developer running the plain `mypy tests/` this error
+message itself suggests gets the same clean result CI does, with no flag to
+remember.
+
+**Verified, not assumed.** `mypy app/`, `mypy alembic/`, `mypy tests/`, and
+the combined `mypy app/ alembic/ tests/` CI actually runs were each run
+standalone after the config change — all four clean, 221 files. Every edit
+here is annotation-only (`from __future__ import annotations` is in effect
+everywhere touched), so the full suite was re-run to confirm zero runtime
+change: still 724 passed.
 
 ---
 
@@ -998,13 +1060,6 @@ is not yet in the gate — see "Still open" below.
 
 Recorded here rather than dropped. Everything listed in earlier rounds as
 deferred has since been closed; this is what remains.
-
-**Tooling**
-
-- **`mypy tests/` has 41 pre-existing errors** across 16 files — mostly
-  missing parameter annotations and a couple of genuine `Iterable`/`Any`
-  typing gaps, none related to this audit. Out of scope for #59; `tests/` is
-  not yet in the CI type-check gate because of it.
 
 **Concurrency**
 

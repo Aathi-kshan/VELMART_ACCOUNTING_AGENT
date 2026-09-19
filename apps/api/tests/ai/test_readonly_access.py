@@ -12,6 +12,7 @@ not a mock.
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 
 import pytest
 from sqlalchemy import text
@@ -26,7 +27,7 @@ from app.models.user import UserRole
 
 
 @pytest.fixture(autouse=True)
-async def _reset_readonly_engine():
+async def _reset_readonly_engine() -> AsyncIterator[None]:
     """`get_readonly_engine`/`get_readonly_sessionmaker` are process-lifetime
     `lru_cache`s, but each test function runs in its own asyncio event loop —
     reusing a pooled asyncpg connection across loops raises "attached to a
