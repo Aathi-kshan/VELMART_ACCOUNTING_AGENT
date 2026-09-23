@@ -100,6 +100,29 @@ def _settings(app_user_url: str, ai_reader_url: str) -> Iterator[None]:
     os.environ.setdefault("JWT_SECRET_KEY", "test-secret-" + "x" * 60)  # >= 64 bytes
     os.environ.setdefault("ENVIRONMENT", "development")
 
+    # The AI layer's config gates (`OPENROUTER_API_KEY` in
+    # app/ai/providers/openrouter.py, `AI_MODEL_*` in app/ai/router.py and
+    # app/ai/orchestrator.py) must never be satisfied by whatever the machine
+    # running the suite happens to have lying around. Nine AI tests passed
+    # locally and failed on GitHub Actions for exactly that reason: a
+    # gitignored `apps/api/.env` supplies `AI_MODEL_*` and the developer's
+    # shell supplies `OPENROUTER_API_KEY`, so the gates were open locally and
+    # shut in CI. A test that needs them open now says so itself
+    # (tests/ai/conftest.py), which is also what keeps a real key from being
+    # live — and a missed mock from reaching OpenRouter for real — during a
+    # local run.
+    #
+    # Set to "" rather than popped: `.env` is a lower-priority source than the
+    # environment but still a source, so deleting the variable would let the
+    # file's value through again.
+    for _ai_var in (
+        "OPENROUTER_API_KEY",
+        "AI_MODEL_ROUTER",
+        "AI_MODEL_DEFAULT",
+        "AI_MODEL_ANALYSIS",
+    ):
+        os.environ[_ai_var] = ""
+
     from app.config import get_settings
 
     get_settings.cache_clear()
