@@ -29,8 +29,6 @@ from typing import Any
 
 import pytest
 
-from app.main import create_app
-
 # tests/ -> apps/api -> apps -> repository root
 _API_DOC = Path(__file__).resolve().parents[3] / "docs" / "API.md"
 
@@ -55,6 +53,13 @@ def _registered_paths() -> set[str]:
     naive walk of `app.routes` finds almost nothing — the same trap
     `test_permissions_matrix.py` documents.
     """
+    # Imported here, not at module scope: app.main builds its module-level
+    # `app` singleton (and so reads settings) at import time, which during
+    # collection runs before the autouse `_settings` fixture has pointed
+    # DATABASE_URL at the container. Same reason as
+    # test_permissions_matrix.py's own lazy import.
+    from app.main import create_app
+
     app = create_app()
     found: set[str] = set()
 
