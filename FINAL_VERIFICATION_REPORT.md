@@ -14,11 +14,14 @@ That instruction was the one that mattered. **The suite was green and the
 system had confirmed data-integrity defects**, including one that silently lost
 writes in an accounting application.
 
-**60 defects were found and fixed**, each pinned by a test that fails without
-the fix. Seven of those were introduced *by the remediation itself* and caught
-by re-auditing it — recorded as such rather than quietly corrected. The last
-two closed two of this report's own "would block a release" findings (R1, the
-CI gate; R2, `mypy`'s coverage of `tests/`) after the initial 58-defect pass.
+**61 defects were found and fixed**, each pinned by a test or a direct,
+reproduced verification that fails without the fix. Eight of those were
+introduced *by the remediation itself* and caught by re-auditing it —
+recorded as such rather than quietly corrected. Defects #59–60 closed two of
+this report's own "would block a release" findings (R1, the CI gate; R2,
+`mypy`'s coverage of `tests/`); #61 was a migration-sequencing bug in the
+audit chain's own tamper-detection anchor, found while gathering the
+realistic-volume measurement for R4 below.
 
 The five that mattered most:
 
@@ -61,7 +64,8 @@ All figures below were produced on this machine, on the final code.
 | Flutter web build | `flutter build web` | **succeeds** |
 | Volume benchmark | `pytest -m slow` at 100k rows | **passes**, all 5 measures inside target |
 | Backup | `infra/scripts/backup_dump.sh` | **runs**, dump verified with `pg_restore --list` |
-| Restore drill | `infra/scripts/restore_drill.sh` | **passes** — 29 tables, 458 rows, chain verified, 3s |
+| Restore drill (dev-sized) | `infra/scripts/restore_drill.sh` | **passes** — 29 tables, 458 rows, chain verified, 3s |
+| Restore drill (realistic volume) | `seed_rto_drill_data.py --seed` then `restore_drill.sh` | **passes** — 28 tables, 200,540 rows, 91 MB, chain verified, 3s — see R4 in §4 for what this does and does not prove |
 | Nightly job | `python -m app.tasks.nightly` | **all four tasks succeed** (`"failed": []`) |
 
 Baseline before this work: 566 backend tests, 144 Flutter tests, all green,
@@ -125,7 +129,7 @@ Nothing below is fixed. All of it is in `BUG_FIX_LOG.md` with detail.
 | R1 | ~~CI was never updated~~ — **closed.** `.github/workflows/api-ci.yml` gained `uv lock --check`, `mypy app/ alembic/` (was `app/` only), and a new `migrations` job: a plain Postgres 18 service that asserts exactly one head then runs `upgrade head` → `downgrade base` → `upgrade head` on a genuinely fresh database. `mobile-ci.yml`'s dead "skip if no pubspec" guard is removed — `apps/mobile` has been a real app since P1, and the guard meant deleting `pubspec.yaml` would have reported green having run nothing. Both steps were exercised locally against a fresh container with the exact commands CI now runs before being wired in; see BUG_FIX_LOG.md #59. |
 | R2 | ~~`mypy tests/` has 41 pre-existing errors~~ — **closed.** 39 errors across 15 files were fixed (mostly missing parameter/return annotations; a handful were real gaps — two `SELECT ... .one()` helpers untyped as `object` instead of SQLAlchemy `Row`, a `build_provenance` union return used without narrowing, a dynamically-built Pydantic class used as a type-subscript variable mypy can't resolve). One config fix went with them: `mypy tests/` in isolation raised "source file found twice under different module names" — `tests/ai/test_golden_questions.py` imports a sibling by its fully-qualified `tests.ai.` path, and with no `__init__.py` anywhere in `tests/`, that import path and the directory-walk path disagreed on the file's module name. Fixed with `mypy_path`/`explicit_package_bases` in `pyproject.toml`, not a CLI flag, so a developer running plain `mypy tests/` gets the same clean result CI does. `mypy app/ alembic/ tests/` now covers all 221 source files with zero errors, and CI runs exactly that. |
 | R3 | **Backups are local-only.** There is no storage layer, so the dump lands on a mounted volume and is never shipped off-platform. The RUNBOOK's "off-platform copy" line is now marked not-implemented rather than claimed. |
-| R4 | **The restore drill's 3s is not the RTO.** It was measured against a 458-row development database. Re-run against production-sized data before treating the 4-hour RTO as evidenced. |
+| R4 | **Narrowed, not closed.** Re-ran the drill against `infra/scripts/seed_rto_drill_data.py`-seeded volume — 100,000 rows each in `records` (JSONB, GIN + trigram indexes, a projection slot, a `FORMULA` column) and `expenses` (native), the same 100k figure this project's own volume benchmark already treats as production-representative. Restore-and-verify: **3s** for 200,540 rows / 91 MB. That is a genuine, useful lower bound on the restore-and-verify step alone — still not the RTO, because it measures nothing about retrieving the backup from off-platform storage (none exists — R3), provisioning a fresh Railway instance, or network transfer (source and destination were the same machine). See `docs/RUNBOOK.md` §5 for the full figures and the precise claim being made. |
 
 ### Correctness, found but not fixed
 
@@ -170,15 +174,23 @@ place:
    every push, and `mypy` covers `app/`, `alembic/` and `tests/` together (R2).
 2. **Backups exist but never leave the machine** (R3). A verified local dump is
    most of the work and none of the insurance.
-3. **The RTO is still unevidenced** (R4).
+3. ~~The RTO is unevidenced~~ — **narrowed, not closed** (R4). The
+   restore-and-verify step itself now has a real measurement at realistic
+   volume (200,540 rows / 91 MB in 3s) rather than the 458-row figure that
+   preceded it. What remains of the RTO claim — retrieval from off-platform
+   storage, provisioning a fresh instance, network transfer — cannot be
+   measured until R3 exists and there is somewhere real (Railway) to restore
+   into. R4 is therefore no longer independent work; it collapses into R3
+   plus the Railway access this environment does not have.
 4. **The client cannot be built for its target platform here** (§5), so no
    end-to-end verification on a real device has been possible.
 
-R3 needs the storage layer; R4 needs one run against realistic data. With
-those closed and a device build verified somewhere with a working Xcode, the
-assessment becomes READY.
+R3 needs the storage layer built, then a repeat of this same drill against
+real off-platform storage and real Railway infrastructure to actually close
+R4. With those, and a device build verified somewhere with a working Xcode,
+the assessment becomes READY.
 
-**What I would not ship without:** R3 and R4 — the two operational blockers
-that remain. Everything found in this audit was found
+**What I would not ship without:** R3 — the operational blocker that remains
+independent of environment access. Everything found in this audit was found
 by something that fails loudly. The gaps that remain are the places where
 nothing does.

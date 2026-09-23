@@ -222,15 +222,51 @@ Record every drill here. This table is the evidence that the RTO is real.
 Run it with `infra/scripts/restore_drill.sh`, which performs steps 1-2 and
 5-8 automatically and exits non-zero if the restored copy fails verification.
 
+For a drill at realistic volume rather than whatever the database happens to
+hold, seed one first:
+
+```
+uv run python infra/scripts/seed_rto_drill_data.py --seed      # ~100k rows/table, ~8s
+infra/scripts/backup_dump.sh
+infra/scripts/restore_drill.sh
+uv run python infra/scripts/seed_rto_drill_data.py --cleanup <company_id>
+```
+
+`--cleanup` removes the seeded company and everything cascaded from it, but
+deliberately leaves its handful of audit-log entries in place — the hash
+chain is one global sequence across every company, and deleting from the
+middle of it would break the chain for every tenant, not just the synthetic
+one. Deleting `records` at this volume is genuinely slow (its GIN and
+trigram indexes cost real time to maintain on delete — measured at 2m19s for
+100,000 rows, against 67ms for the same row count in an index-light native
+table); the script accounts for this with its own longer timeout, so this is
+expected, not a hang.
+
 | Date | Performed by | Restore source | Wall-clock time | Rows verified | Schemas verified | Chain OK | Findings |
 |---|---|---|---|---|---|---|---|
 | 2026-09-19 | Automated (`restore_drill.sh`), local Docker Postgres 18 | `velmart-20260919T142033Z.dump` (138 KB, 260 objects) | **3s** | 458 across 29 tables | Yes — migration head `0021` matched, all tables present with equal row counts | Yes | First drill ever performed. Both scripts were 0-byte files until this date, so no backup had ever been taken and the 4-hour RTO had never been measured. Dataset is development-sized; the 3s figure does **not** validate the RTO at production volume. |
+| 2026-09-23 | Automated (`restore_drill.sh`), local Docker Postgres 18, against `infra/scripts/seed_rto_drill_data.py`-seeded volume | `velmart-20260923T052021Z.dump` (6.6 MB, 255 objects) | **3s** | 200,540 across 28 tables | Yes — migration head `0025` matched, all tables present with equal row counts | Yes | Second drill, at realistic volume: 100,000 rows in `records` (generic JSONB page — GIN + trigram indexes, a projection slot, a `FORMULA` column) and 100,000 in `expenses` (native system table), the same 100k figure `tests/perf/test_volume.py` and the project's own volume target both already treat as production-representative. Source database was 91 MB. Drill data removed afterward (`--cleanup`); dev database confirmed back to its prior state and the audit chain confirmed still valid. |
 
-> **The measured time above is not the RTO.** It is a development database of
-> 458 rows. What the drill currently proves is that the procedure works end to
-> end and the restored copy verifies — not that it does so within four hours at
-> real volume. Re-run against a production-sized dataset before treating the
-> RTO as evidenced.
+> **Neither measured time above is the RTO**, for different reasons.
+>
+> The first (2026-09-19) proved almost nothing beyond "the procedure runs" —
+> 458 rows is not a volume any real restore would be measured against.
+>
+> The second (2026-09-23) is a genuine improvement — 3 seconds to restore and
+> fully verify 200,540 rows / 91 MB is a real, useful lower bound on the
+> **restore-and-verify step itself**, at this project's own definition of
+> production-representative volume. It is still not the RTO, because it
+> measures none of the following, each real time a production incident would
+> spend: retrieving the backup from off-platform storage (there is none yet —
+> see §3's "Bucket objects: Not implemented"), provisioning a fresh database
+> instance on Railway, and repointing the application at it. Source and
+> destination were also the same machine, so no network transfer time is
+> reflected at all.
+>
+> Re-run this drill against real off-platform storage and real Railway
+> infrastructure once both exist before treating the 4-hour RTO as evidenced.
+> Until then, what is evidenced is narrower and stated precisely above rather
+> than rounded up to "the RTO is fine."
 
 ---
 

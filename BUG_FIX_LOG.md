@@ -1056,6 +1056,94 @@ change: still 724 passed.
 
 ---
 
+---
+
+## Round 10 — narrowing R4 (a real restore-drill measurement)
+
+R4 said the drill's 3-second figure was not an RTO because it was measured
+against 458 development rows. Closing it needed a real data volume to
+restore against — this round builds that, measures it, and reports exactly
+what the new number does and does not prove.
+
+### 61. `audit_chain_anchor` reported false tampering — found via R4, fixed and committed separately
+
+Seeding realistic volume for this round's drill surfaced `truncation_detected
+= True` on a database nothing had truncated: a migration-sequencing bug where
+`audit_chain_anchor.last_id` was written under migration `0019`'s original
+meaning (`audit_logs.id`) and read back under `0021`'s later meaning
+(`chain_seq`), with no migration in between reconciling an already-written
+row. Full writeup and the fix are in migration `0025`'s own docstring and
+commit `91207e1` — recorded here only as the pointer, so this round's own
+entry doesn't duplicate it. Counted as defect #61; the running total in
+`FINAL_VERIFICATION_REPORT.md`'s executive summary includes it.
+
+### 62. The restore drill had never run against realistic volume — R4
+
+**Root problem.** `restore_drill.sh` genuinely worked, but every figure ever
+recorded for it was measured against whatever the development database
+happened to hold — 458 rows the first time. That number answers "does the
+mechanism work?", not "how long would this actually take?", and those can
+differ by orders of magnitude once a real backup is gigabytes, not
+kilobytes.
+
+**Fix.** `infra/scripts/seed_rto_drill_data.py` seeds a dedicated company at
+100,000 rows in `records` (the generic JSONB path — GIN + trigram indexes, a
+projection slot, a `FORMULA` column) and 100,000 in `expenses` (the native
+system-table path), the same figure `tests/perf/test_volume.py` and the
+project's own volume target already treat as production-representative, so
+this round didn't invent a new scale convention — it reused the one that
+already existed. Rows are bulk-inserted directly (`insert(Record)`,
+`insert(Expense)`), the same choice the perf benchmark makes and for the same
+reason: the point is restore-time volume, not proving individual `POST`
+calls work.
+
+**Measured.** 200,540 rows, 91 MB source database, 6.6 MB compressed dump,
+**restore-and-verify in 3 seconds** — migration head matched, all 28 tables'
+row counts matched, and the audit chain re-verified inside the restored
+copy. Full figures in `docs/RUNBOOK.md` §5's drill log.
+
+**What this does and does not prove, stated precisely rather than rounded
+up.** It is a real, useful lower bound on the restore-and-verify step at a
+volume this project already calls production-representative — a genuine
+step up from 458 meaningless rows. It is *not* the 4-hour RTO: source and
+destination were the same machine (no network transfer time), there is
+nowhere off-platform to retrieve a backup *from* yet (R3), and no Railway
+instance to provision into (`BLOCKED — ENVIRONMENT`). R4 therefore moves
+from "unevidenced" to "narrowed" — it is no longer separately closeable
+work; what remains of it is the same work R3 and Railway access already
+require.
+
+**Cleanup, and what it found.** `--cleanup` removes the seeded company via
+`DELETE FROM companies`, cascading through every FK. First version hit
+`DB_STATEMENT_TIMEOUT_MS`'s 15s limit — cleanly rolled back, verified against
+the live database (row counts unchanged, audit chain still valid) before
+touching the script. Root cause, isolated with a direct `psql` timing test
+rather than guessed at: `records`' GIN (JSONB) and trigram (search) indexes
+cost real time to maintain on delete — **2m19s** for 100,000 rows, against
+**67ms** for the same row count in `expenses`, which has neither. Not a bug
+in the script; a real, worth-knowing property of this schema's own
+indexing choices. Fixed by giving each large table its own transaction and a
+10-minute local `statement_timeout`, deleting the expensive table first and
+in isolation from the cheap ones.
+
+### 63. Uncommitted attachment/storage stub deletions, found already in the working tree — reviewed and committed
+
+Not a defect found by this round's own investigation — a substantial,
+already-complete set of changes was sitting uncommitted in the working tree
+at the start of this session (0-byte `app/storage/*`, `app/routers/
+attachments.py`, `app/services/attachment_service.py`,
+`app/repositories/attachments.py` deleted; several doc/comment references
+to "empty stub files" updated to describe the absence of a storage layer
+instead, since the files were gone). Per this project's own standing rule
+about uncommitted work — never discard without inspecting first — every
+diff was read in full before it was trusted. All of it was coherent,
+self-consistent, and independently verified safe: a repo-wide grep found no
+remaining import of any deleted module, and the full test suite (724) and
+`mypy` both passed with the deletions already in place. Committed as its own
+unit (`c2e1f3b`), separately from this round's own work, so its authorship
+and reasoning stay attributable to whichever earlier pass actually did it
+rather than being folded into this one.
+
 ## Still open (found, not yet fixed)
 
 Recorded here rather than dropped. Everything listed in earlier rounds as
