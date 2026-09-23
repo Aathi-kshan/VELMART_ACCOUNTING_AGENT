@@ -52,9 +52,9 @@ Two rules that override any schedule pressure:
 > `GET /reconciliation`, and `GET /dashboard/digest`.
 >
 > **Never built, despite being described as done in places:** attachments. There is no attachments
-> router mounted; `app/routers/attachments.py`, `app/services/attachment_service.py`,
-> `app/repositories/attachments.py` and `app/storage/*` are empty stubs, and `ATTACHMENT` is no
-> longer offered as a column type because it produced a field that could never hold anything.
+> router, service, repository, or storage layer; the `attachments` table and model remain (migration
+> `0003`) for when the slice is built. `ATTACHMENT` is no longer offered as a column type because it
+> produced a field that could never hold anything.
 >
 > Test counts in the rows below are per-phase snapshots and are not maintained; see
 > `FINAL_VERIFICATION_REPORT.md` for current numbers. See `docs/PROJECT_PLAN.md` §11.3, §13, §15 for
@@ -385,9 +385,9 @@ against a real 100k rows and reported actual timings (see the P4 backend row abo
 log. CSV import/export already shipped in P3.5 and were explicitly left as-is (out of scope here,
 confirmed with the user — no presigned-URL retrofit). **Attachments are deferred, not implemented**:
 the user will manually enter records directly into the tables for now, so photo/PDF attachment
-upload has no current need; `app/services/attachment_service.py`, `app/storage/`,
-`app/routers/attachments.py` remain 0-byte stubs and `lib/features/attachments/` remains empty.
-Revisit as its own future slice if manager-uploaded receipts/photos become a real need.
+upload has no current need. Revisit as its own future slice if manager-uploaded receipts/photos
+become a real need. The `attachments` table/model is kept; there is no router, service, storage
+layer, or Flutter attachments folder.
 
 **Prerequisites:** P4.
 
@@ -422,9 +422,9 @@ slices) now compiler-verified too — see the P1 client row's "Verification gap 
 connection — the shop and its managers are expected to be online during normal operation, so full
 offline record capture is not required for this release. A detailed vertical-slice implementation
 plan was drafted and reviewed but **intentionally not implemented** (no offline code — Drift/SQLCipher
-cache, outbox, sync engine, connectivity detection — exists in the client; the four 0-byte stub
-files this section names, plus `apps/api/tests/test_offline_sync_idempotency.py`, remain untouched
-stubs, same as Attachments). P6 is **not on the critical path** for P7/P8/P9 — see the critical-path
+cache, outbox, sync engine, connectivity detection — exists in the client; the placeholder files
+this section names were removed rather than left as empty stubs). P6 is **not on the critical path**
+for P7/P8/P9 — see the critical-path
 diagram below, which no longer routes through it. Revisit this phase if the product later needs to
 support genuinely unreliable connectivity (e.g. a rural pilot site) rather than reordering the
 existing plan now on a mere possibility.

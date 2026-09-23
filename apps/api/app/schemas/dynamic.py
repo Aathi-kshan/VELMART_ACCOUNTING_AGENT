@@ -7,7 +7,7 @@ Scope boundary (see the P3 plan's Context section): `FORMULA` columns are
 computed server-side and never accepted as input — the expression evaluator
 itself is P4 (`app/core/expressions/`). `ATTACHMENT` columns are also
 excluded from this model in P3: there is no upload mechanism yet
-(`app/services/attachment_service.py` is a P5 stub), so there is nothing a
+(attachments were deferred), so there is nothing a
 client could legitimately supply for one yet. Both are simply absent from
 the generated model — not validated, not accepted, not required.
 

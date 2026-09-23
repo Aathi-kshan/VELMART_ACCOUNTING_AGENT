@@ -9,10 +9,10 @@ describe (§25: "a backup that restores records but loses `pages` and
 `page_columns` restores meaningless JSONB").
 
 **Uploading the dump to the bucket is deferred**, the same explicit scope
-decision as the Attachments slice's S3 storage work — `app/storage/` stays
-an empty stub for this pass. This task proves the dump itself succeeds and
-reports where it landed locally; wiring it to a bucket upload is a small,
-contained follow-up once that storage layer exists.
+decision as the Attachments slice. There is no storage layer in this pass.
+This task proves the dump itself succeeds and reports where it landed
+locally; wiring it to a bucket upload is a small, contained follow-up once
+that storage layer exists.
 
 Until then the destination matters. This wrote into `tempfile.gettempdir()`,
 which on a container platform is ephemeral: every dump was discarded on the

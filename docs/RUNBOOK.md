@@ -169,7 +169,7 @@ schema changes are audited as heavily as data changes.
 | Postgres | Point-in-time recovery (continuous WAL) | Continuous | Per plan |
 | Postgres | `pg_dump` via the nightly cron service | Daily 02:00 SLT (20:30 UTC) | 90 days |
 | Postgres | **Off-platform copy on the Owner's drive** | Weekly | 12 months |
-| Bucket objects | _Not implemented_ — `app/storage/` is an unbuilt stub | — | — |
+| Bucket objects | _Not implemented_ — no storage layer; dumps stay on a local volume | — | — |
 | Audit log | As above + nightly chain verification | — | 7 years |
 
 The off-platform weekly copy exists because "our hosting provider had a bad day" is a real risk, and
@@ -251,7 +251,7 @@ redeploy; the task logs `backup.not_persistent` when that happens.
 | Task | Module | Purpose |
 |---|---|---|
 | Audit chain verify | `app/tasks/audit_chain_verify.py` | Detect tampering; alert on any break |
-| `pg_dump` backup | `app/tasks/export_build.py` (`infra/scripts/backup_dump.sh` for manual runs) | 90-day retained logical backup to `BACKUP_DIR`. **Not** uploaded to a bucket — `app/storage/` is still a stub, so this is a local/volume copy only. |
+| `pg_dump` backup | `app/tasks/export_build.py` (`infra/scripts/backup_dump.sh` for manual runs) | 90-day retained logical backup to `BACKUP_DIR`. **Not** uploaded to a bucket — there is no storage layer, so this is a local/volume copy only. |
 | Idempotency cleanup | `app/tasks/idempotency_cleanup.py` | Remove keys older than 48h |
 | Daily digest | `app/tasks/daily_digest.py` | Pages with no records in N days, `needs_review` records, chain breaks, AI spend. (Failed imports and unsynced outboxes are listed in older copies of this table; both features were removed.) |
 

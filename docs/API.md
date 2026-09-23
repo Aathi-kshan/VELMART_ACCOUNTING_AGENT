@@ -392,11 +392,11 @@ Distinct values for a column — SELECT options, or observed text values. This i
 
 ## 6. Attachments — designed, not built
 
-> **None of this exists yet.** There is no attachments router mounted
-> (`app/main.py`), `app/routers/attachments.py` and `app/services/`,
-> `app/repositories/` and `app/storage/`'s attachment modules are empty stubs,
-> and the `ATTACHMENT` column type is no longer offered when defining a column
-> because choosing it produced a field that could never hold anything.
+> **None of this exists yet.** There is no attachments router, service,
+> repository, or storage layer. The `attachments` table and model remain
+> (migration `0003`). The `ATTACHMENT` column type is no longer offered when
+> defining a column because choosing it produced a field that could never hold
+> anything.
 >
 > The design below is retained as the intended shape for when the bucket layer
 > is built. Until then it describes nothing that is callable, and the four

@@ -3,7 +3,7 @@ Part 2). Owner only.
 
 Deviates from docs/PROJECT_PLAN.md section 13.2 on purpose: the locked spec
 writes the file to a bucket and returns a presigned URL, which depends on
-`app/storage/` (confirmed empty, a P5 dependency). Export instead returns
+a storage layer that was never built. Export instead returns
 the CSV directly as the response body — no bucket, no S3, no presigned URL
 — and the Flutter client hands it to the OS share sheet. Still true to the
 rest of section 13.2: UTF-8 with a BOM so Excel opens it cleanly, and every
